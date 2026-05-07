@@ -98,6 +98,15 @@ export const Icon = ({ name, size = 16, stroke = 1.7, style, ...rest }) => {
           <path d="M3 3v5h5" />
         </svg>
       );
+    case "refresh-cw":
+      return (
+        <svg {...props}>
+          <path d="M21 12a9 9 0 0 1-14.7 7" />
+          <path d="M3 12a9 9 0 0 1 14.7-7" />
+          <path d="M18 2v5h-5" />
+          <path d="M6 22v-5h5" />
+        </svg>
+      );
     /** Палитра — раздел «Дизайн» в редакторе. */
     case "palette":
       return (
@@ -241,15 +250,15 @@ export const STYLE_PRESETS = [
     description: "Чистый белый фон и насыщенный синий акцент — максимум читаемости на проекторе и в зале.",
   },
   {
-    id: "bright_dark",
+    id: "light_warm",
     minPlan: "student",
-    name: "Яркая тёмная",
-    bg: "#030712",
-    ink: "#f8fafc",
-    accent: "#22d3ee",
-    palette: ["#030712", "#f8fafc", "#22d3ee", "#06b6d4", "#1e293b"],
-    note: "неон на чёрном",
-    description: "Глубокий чёрный фон и яркий циан — выразительный вид для демо и технических докладов.",
+    name: "Классическая 2",
+    bg: "#faf9f6",
+    ink: "#1c1917",
+    accent: "#b45309",
+    palette: ["#faf9f6", "#1c1917", "#b45309", "#92400e", "#fef3c7"],
+    note: "тёплый нейтральный",
+    description: "Тёплая кремовая подложка и янтарный акцент — для официальных отчётов и деловых встреч.",
   },
   {
     id: "dawn",
@@ -264,8 +273,41 @@ export const STYLE_PRESETS = [
   },
 ];
 
+export const PRESENTATION_STYLES = [
+  {
+    id: "pitch",
+    name: "Минимализм",
+    description: "Максимум визуала, минимум текста. ИИ сам выбирает структуру — без шаблонов.",
+    note: "показывай, не рассказывай",
+  },
+  {
+    id: "report",
+    name: "Подробный доклад",
+    description: "Самостоятельный документ — читается без докладчика. Полные предложения, данные, выводы.",
+    note: "плотный текст и данные",
+  },
+  {
+    id: "lecture",
+    name: "Обучение",
+    description: "Образовательный контент для учёбы и воркшопов. Сопровождение к речи.",
+    note: "тема → теория → примеры",
+  },
+  {
+    id: "analytical",
+    name: "Аналитический отчёт",
+    description: "Для команды и стейкхолдеров: анализ, метрики, рекомендации.",
+    note: "баланс текста и визуала",
+  },
+  {
+    id: "proposal",
+    name: "Коммерческое предложение",
+    description: "Для клиента: акцент на выгоду, заканчивается конкретным предложением.",
+    note: "боль клиента → оффер",
+  },
+];
+
 export function isDarkStyleId(id) {
-  return id === "dark" || id === "bright_dark";
+  return id === "dark";
 }
 
 /** Имя темы для подписей в UI (как в STYLE_PRESETS или аккуратный fallback для неизвестного id). */
@@ -283,7 +325,7 @@ export function presentationThemeDisplayName(themeId) {
 /** Единый формат строки: «Стиль презентации …». */
 export function presentationStyleCaption(themeId) {
   const name = presentationThemeDisplayName(themeId || "light");
-  return name ? `Стиль презентации ${name}` : "";
+  return name ? `${name}` : "";
 }
 
 export const PITCH_SLIDES = [
@@ -492,8 +534,8 @@ function StylePreviewFallback({ preset }) {
   const pillBg = isDark ? "rgba(125,211,252,0.14)" : `color-mix(in srgb, ${preset.accent} 16%, ${preset.bg})`;
 
   const minimal = preset.id === "bright_light";
-  const corporate = preset.id === "light";
-  const vibrant = preset.id === "bright_light" || preset.id === "bright_dark" || preset.id === "dawn";
+  const corporate = preset.id === "light" || preset.id === "light_warm";
+  const vibrant = preset.id === "bright_light" || preset.id === "dawn";
 
   return (
     <div

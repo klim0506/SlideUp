@@ -84,6 +84,10 @@ const DEFAULT_WATERMARK_MODE = WATERMARK_MODE_CORNER_TR;
 
 const WATERMARK_MODES_VALID = new Set([WATERMARK_MODE_NONE, WATERMARK_MODE_CORNER_BR, WATERMARK_MODE_CORNER_TR]);
 
+const DECK_AI_MODE_DECK = "deck";
+const DECK_AI_MODE_APPEND_SLIDE = "append_slide";
+const NEW_SLIDE_PROMPT_TEMPLATE = "Создай один новый слайд. Сохрани общий стиль презентации и логично продолжи текущую структуру. Тема слайда: \n";
+
 function normalizeWatermarkMode(value, legacyShowWatermark) {
   if (value === "corner_tl") return WATERMARK_MODE_CORNER_TR;
   if (typeof value === "string" && WATERMARK_MODES_VALID.has(value)) return value;
@@ -458,6 +462,8 @@ function ExistingPresentationView({ id, publicView = false }) {
   const [localAiMessages, setLocalAiMessages] = useState([]);
   const [localAiBusy, setLocalAiBusy] = useState(false);
   const [deckAiBusy, setDeckAiBusy] = useState(false);
+  const [appendSlideBusy, setAppendSlideBusy] = useState(false);
+  const [deckAiPromptSeed, setDeckAiPromptSeed] = useState(null);
   const [persistBusy, setPersistBusy] = useState(false);
 
   const slides = Array.isArray(presentation?.slides) ? presentation.slides : [];
@@ -686,13 +692,15 @@ function ExistingPresentationView({ id, publicView = false }) {
   );
 
   const handleApplyDeckAssist = useCallback(
-    async (instruction) => {
+    async (instruction, options = {}) => {
       if (!presentation || publicView) return;
       if (!getAccessToken()) {
         setAuthOpen(true);
         return;
       }
+      const mode = options?.mode === DECK_AI_MODE_APPEND_SLIDE ? DECK_AI_MODE_APPEND_SLIDE : DECK_AI_MODE_DECK;
       setDeckAiBusy(true);
+      if (mode === DECK_AI_MODE_APPEND_SLIDE) setAppendSlideBusy(true);
       setNotice("");
       try {
         const data = await apiJson("/api/assist-deck/", {
@@ -702,8 +710,34 @@ function ExistingPresentationView({ id, publicView = false }) {
             slides,
             instruction,
             presentation_id: presentation.id,
+            mode,
           }),
         });
+
+        if (mode === DECK_AI_MODE_APPEND_SLIDE) {
+          const slide = data.slide || (Array.isArray(data.slides) ? data.slides[0] : null);
+          if (!slide || typeof slide !== "object") {
+            throw new Error("Модель не вернула новый слайд — создание отменено.");
+          }
+          const sid = slide[SLIDE_SID_KEY] || newSlideSid();
+          const merged = { ...slide, [SLIDE_SID_KEY]: sid };
+          const nextSlides = [...slides, merged];
+          const hist = {
+            ...slideHistoriesMap,
+            [sid]: [
+              {
+                at: new Date().toISOString(),
+                source: "ai",
+                summary: "Новый слайд создан ИИ.",
+                slide: cloneSlideSnapshot(merged),
+              },
+            ],
+          };
+          await persistDeckPatch({ slides: nextSlides, slide_histories: hist }, "Новый слайд создан и добавлен в презентацию.");
+          setCurrentSlide(nextSlides.length - 1);
+          return;
+        }
+
         const nextSlides = [...(data.slides || [])];
         if (nextSlides.length !== slides.length) {
           throw new Error("Модель вернула другое число слайдов — правка отменена.");
@@ -730,6 +764,7 @@ function ExistingPresentationView({ id, publicView = false }) {
         throw err;
       } finally {
         setDeckAiBusy(false);
+        if (mode === DECK_AI_MODE_APPEND_SLIDE) setAppendSlideBusy(false);
       }
     },
     [presentation, publicView, slides, slideHistoriesMap, persistDeckPatch],
@@ -771,44 +806,6 @@ function ExistingPresentationView({ id, publicView = false }) {
       }
     },
     [presentation, publicView, slides, slideHistoriesMap, historySlideSafe, applyRefinedSlideAtIndex],
-  );
-
-  const handleRepromptCurrentSlide = useCallback(
-    async (text, focusChrono) => {
-      if (!presentation || publicView) return;
-      if (!getAccessToken()) {
-        setAuthOpen(true);
-        return;
-      }
-      const slideIndex = currentSlide;
-      const sid = slides[slideIndex]?.[SLIDE_SID_KEY];
-      const versions = sid ? slideHistoriesMap[sid] || [] : [];
-      const baseSlide = versions[focusChrono]?.slide || slides[slideIndex];
-      if (!baseSlide) return;
-      const vLabel = focusChrono >= 0 ? `v${focusChrono + 1}` : "текущей";
-      const instruction = `Работай только с одним слайдом (JSON ниже — полный слайд). Опорная версия: ${vLabel}.\nЗапрос: ${text}`;
-      setLocalAiBusy(true);
-      try {
-        const { slide } = await apiJson("/api/refine-slide/", {
-          method: "POST",
-          body: JSON.stringify({
-            slide: baseSlide,
-            instruction,
-            presentation_title: presentation.title || "Презентация",
-            presentation_id: presentation.id,
-          }),
-        });
-        const short = text.length > 88 ? `${text.slice(0, 88)}…` : text;
-        await applyRefinedSlideAtIndex(slideIndex, slide, `ИИ: ${short}`, "ai");
-        setNotice("Слайд обновлён.");
-      } catch (err) {
-        setNotice(err.message || "Слайд сейчас не обновился — попробуйте ещё раз.");
-        if (err.status === 429 || err.data?.show_upsell) setUpsellOpen(true);
-      } finally {
-        setLocalAiBusy(false);
-      }
-    },
-    [presentation, publicView, slides, slideHistoriesMap, currentSlide, applyRefinedSlideAtIndex],
   );
 
   const handleHistoryRestore = useCallback(
@@ -927,6 +924,24 @@ function ExistingPresentationView({ id, publicView = false }) {
     },
     [slides.length, unlockedSlideCount, currentSlide, flushEditedSlideVersion],
   );
+
+  const handleRequestAppendSlide = useCallback(() => {
+    if (publicView || appendSlideBusy) return;
+    setDeckAiPromptSeed({
+      text: NEW_SLIDE_PROMPT_TEMPLATE,
+      mode: DECK_AI_MODE_APPEND_SLIDE,
+      nonce: Date.now(),
+    });
+  }, [publicView, appendSlideBusy]);
+
+  const handlePromptCurrentSlideVariant = useCallback(() => {
+    if (publicView || deckAiBusy) return;
+    setDeckAiPromptSeed({
+      text: `Работай только со слайдом ${currentSlide + 1}, остальные слайды не меняй. Вот что нужно улучшить или изменить: \n`,
+      mode: DECK_AI_MODE_DECK,
+      nonce: Date.now(),
+    });
+  }, [publicView, deckAiBusy, currentSlide]);
 
   const handleHistoryDuplicate = useCallback(
     (chronoIdx) => {
@@ -1385,7 +1400,6 @@ function ExistingPresentationView({ id, publicView = false }) {
           minWidth: 0,
           display: "flex",
           flexDirection: "column",
-          width: "100%",
           overflow: "hidden",
           padding: "18px 20px 20px",
           gap: 14,
@@ -1737,6 +1751,8 @@ function ExistingPresentationView({ id, publicView = false }) {
             watermarkMode={watermarkMode}
             slideWidth={slideDims?.w}
             slideHeight={slideDims?.h}
+            appendSlideBusy={appendSlideBusy}
+            onAppendSlidePrompt={handleRequestAppendSlide}
             moveSlide={moveSlide}
             leadingInsetPx={publicView ? 8 : PRESENTATION_TITLE_RAIL_SLOT_PX}
           />
@@ -1802,7 +1818,7 @@ function ExistingPresentationView({ id, publicView = false }) {
                   slidesLen={slides.length}
                   preset={basePreset}
                   onActivate={handleRestoreCurrentSlide}
-                  onSendAi={handleRepromptCurrentSlide}
+                  onPromptAi={handlePromptCurrentSlideVariant}
                   localAiBusy={localAiBusy}
                   busy={persistBusy}
                   publicView={publicView}
@@ -1841,6 +1857,7 @@ function ExistingPresentationView({ id, publicView = false }) {
                   presentationId={id}
                   publicView={publicView}
                   busy={deckAiBusy}
+                  promptSeed={deckAiPromptSeed}
                   onBusyChange={setDeckAiBusy}
                   onApplyDeckAssist={handleApplyDeckAssist}
                   onAuthRequest={() => setAuthOpen(true)}
@@ -2493,6 +2510,7 @@ function EditorDesignPanel({
             </button>
           );
         })}
+
       </div>
 
       {customPresetActive && canUseCustomTheme(userPlan) ? (
@@ -2686,11 +2704,6 @@ function EditorDesignPanel({
 
 const DECK_AI_PROMPTS = [
   {
-    id: "new-slide",
-    label: "Новый слайд на тему ...",
-    prompt: "Добавь новый слайд на тему: . Сохрани общий стиль презентации, сделай понятный заголовок и 3-5 сильных тезисов.",
-  },
-  {
     id: "fix-current",
     label: "Исправь на этом слайде ...",
     prompt: "Исправь текущий слайд: . Не меняй смысл презентации, улучши ясность, структуру и визуальную иерархию.",
@@ -2712,14 +2725,16 @@ const DECK_AI_PROMPTS = [
   },
 ];
 
-function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId: _presentationId, publicView, busy, onBusyChange, onApplyDeckAssist, onAuthRequest }) {
+function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId: _presentationId, publicView, busy, promptSeed, onBusyChange, onApplyDeckAssist, onAuthRequest }) {
   const [prompt, setPrompt] = useState("");
+  const [promptMode, setPromptMode] = useState(DECK_AI_MODE_DECK);
   const [docFile, setDocFile] = useState(null);
   const [speechListening, setSpeechListening] = useState(false);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
   const speechBaseRef = useRef("");
+  const promptHistoryRef = useRef({ entries: [""], index: 0 });
 
   const speechSupported =
     typeof window !== "undefined" &&
@@ -2773,8 +2788,23 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
     }
   }
 
-  function applyPromptTemplate(template) {
+  const pushPromptHistory = useCallback((nextValue) => {
+    const next = String(nextValue ?? "");
+    const h = promptHistoryRef.current;
+    const current = h.entries[h.index];
+    if (current === next) return;
+    const trimmedEntries = h.entries.slice(0, h.index + 1);
+    trimmedEntries.push(next);
+    const maxEntries = 200;
+    const kept = trimmedEntries.length > maxEntries ? trimmedEntries.slice(trimmedEntries.length - maxEntries) : trimmedEntries;
+    h.entries = kept;
+    h.index = kept.length - 1;
+  }, []);
+
+  function applyPromptTemplate(template, mode = DECK_AI_MODE_DECK) {
     setPrompt(template);
+    pushPromptHistory(template);
+    setPromptMode(mode);
     window.requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       if (!textarea) return;
@@ -2782,6 +2812,11 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
       textarea.setSelectionRange(template.length, template.length);
     });
   }
+
+  useEffect(() => {
+    if (!promptSeed?.nonce) return;
+    applyPromptTemplate(promptSeed.text || NEW_SLIDE_PROMPT_TEMPLATE, promptSeed.mode || DECK_AI_MODE_DECK);
+  }, [promptSeed?.nonce]);
 
   async function submitPrompt() {
     const trimmed = prompt.trim();
@@ -2793,8 +2828,10 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
 
     onBusyChange(true);
     try {
-      await onApplyDeckAssist(trimmed);
+      await onApplyDeckAssist(trimmed, { mode: promptMode });
       setPrompt("");
+      pushPromptHistory("");
+      setPromptMode(DECK_AI_MODE_DECK);
     } finally {
       onBusyChange(false);
     }
@@ -2831,7 +2868,8 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
         style={{
           marginTop: "auto",
           flexShrink: 0,
-          padding: 0,
+          borderTop: "1px solid color-mix(in srgb, var(--line) 78%, transparent)",
+          padding: "10px 0 0",
           border: "none",
           borderRadius: 0,
           background: "transparent",
@@ -2854,7 +2892,7 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
               key={item.id}
               type="button"
               disabled={busy}
-              onClick={() => applyPromptTemplate(item.prompt)}
+              onClick={() => applyPromptTemplate(item.prompt, item.mode || DECK_AI_MODE_DECK)}
               style={{
                 padding: "6px 9px",
                 borderRadius: "var(--r-md)",
@@ -2879,8 +2917,40 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
         <textarea
           ref={textareaRef}
           value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
+          onChange={(event) => {
+            const next = event.target.value;
+            setPrompt(next);
+            pushPromptHistory(next);
+            if (!next.trim()) setPromptMode(DECK_AI_MODE_DECK);
+          }}
           onKeyDown={(event) => {
+            const isMod = event.metaKey || event.ctrlKey;
+            if (isMod && !event.altKey && event.key.toLowerCase() === "z" && !event.shiftKey) {
+              const h = promptHistoryRef.current;
+              if (h.index > 0) {
+                event.preventDefault();
+                h.index -= 1;
+                const prev = h.entries[h.index] ?? "";
+                setPrompt(prev);
+                if (!prev.trim()) setPromptMode(DECK_AI_MODE_DECK);
+              }
+              return;
+            }
+            if (
+              isMod &&
+              !event.altKey &&
+              (event.key.toLowerCase() === "y" || (event.key.toLowerCase() === "z" && event.shiftKey))
+            ) {
+              const h = promptHistoryRef.current;
+              if (h.index < h.entries.length - 1) {
+                event.preventDefault();
+                h.index += 1;
+                const next = h.entries[h.index] ?? "";
+                setPrompt(next);
+                if (!next.trim()) setPromptMode(DECK_AI_MODE_DECK);
+              }
+              return;
+            }
             if (event.key === "Enter" && !event.shiftKey && (event.metaKey || event.ctrlKey)) {
               event.preventDefault();
               void submitPrompt();
@@ -2893,7 +2963,7 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
           style={{
             minHeight: 168,
             padding: "12px 14px",
-            borderLeft: "2px solid color-mix(in srgb, var(--accent) 66%, var(--line))",
+            borderLeft: "none",
             borderRadius: 0,
             background: "color-mix(in srgb, var(--surface-2) 28%, var(--surface))",
             fontSize: 14,
@@ -3318,9 +3388,6 @@ function EditorRightSidebar({
   onSendLocalSlideAi,
   localAiBusy,
   persistBusy,
-  deckAiBusy,
-  onDeckAssist,
-  onDeckAiBusyChange,
   onAuthRequest,
   slidesLength,
   lastUnlockedSlideIndex,
@@ -3328,7 +3395,6 @@ function EditorRightSidebar({
 }) {
   const dock = [
     { id: "design", title: "Дизайн презентации", icon: "palette" },
-    ...(!publicView ? [{ id: "ai", title: "ИИ презентации", icon: "sparkles" }] : []),
     { id: "export", title: "Экспорт", icon: "download" },
   ];
 
@@ -3369,7 +3435,7 @@ function EditorRightSidebar({
     export: "Экспорт",
   };
 
-  const panelBusy = persistBusy || localAiBusy || deckAiBusy;
+  const panelBusy = persistBusy || localAiBusy;
 
   return (
     <>
@@ -4010,6 +4076,8 @@ function SlideFilmstripSidebar({
   watermarkMode = DEFAULT_WATERMARK_MODE,
   slideWidth = null,
   slideHeight = null,
+  appendSlideBusy = false,
+  onAppendSlidePrompt = null,
   moveSlide,
   leadingInsetPx = 8,
 }) {
@@ -4141,6 +4209,80 @@ function SlideFilmstripSidebar({
             </div>
           );
         })}
+
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "flex-start",
+            gap: 5,
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 22,
+              flexShrink: 0,
+              textAlign: "right",
+              fontSize: 12,
+              fontFamily: "var(--font-mono)",
+              fontWeight: 600,
+              color: "var(--ink-4)",
+              paddingTop: 5,
+              lineHeight: 1,
+            }}
+          >
+            {slides.length + 1}
+          </span>
+          <button
+            type="button"
+            disabled={!onAppendSlidePrompt || appendSlideBusy}
+            onClick={onAppendSlidePrompt || undefined}
+            title="Создать новый слайд через ИИ"
+            aria-label="Создать новый слайд через ИИ"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              margin: 0,
+              padding: 4,
+              borderRadius: SLIDE_FILMSTRIP_THUMB_RADIUS + 2,
+              border: "none",
+              background: "transparent",
+              cursor: appendSlideBusy ? "progress" : "pointer",
+              outline: "none",
+              textAlign: "left",
+              transition: "background 0.15s, opacity 0.15s",
+              boxShadow: "none",
+            }}
+          >
+            <div
+              style={{
+                aspectRatio: "16 / 9",
+                width: "100%",
+                borderRadius: SLIDE_FILMSTRIP_THUMB_RADIUS,
+                overflow: "hidden",
+                border: "1px solid color-mix(in srgb, var(--accent) 30%, var(--line))",
+                background: appendSlideBusy
+                  ? "color-mix(in srgb, var(--accent) 10%, rgba(255,255,255,.82))"
+                  : "color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.72))",
+                display: "grid",
+                placeItems: "center",
+                color: "var(--accent)",
+                boxShadow: "0 0 0 1px rgba(32,33,36,.03)",
+              }}
+            >
+              {appendSlideBusy ? (
+                <span aria-label="Создаём слайд" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <span className="su-ai-typing-dot" />
+                  <span className="su-ai-typing-dot" />
+                  <span className="su-ai-typing-dot" />
+                </span>
+              ) : (
+                <Icon name="plus" size={30} stroke={1.9} />
+              )}
+            </div>
+          </button>
+        </div>
       </div>
 
       <div

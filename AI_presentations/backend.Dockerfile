@@ -1,5 +1,6 @@
 FROM python:3.12-slim-bookworm
 
+# weasyprint system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libcairo2 \

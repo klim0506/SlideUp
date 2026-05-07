@@ -16,7 +16,7 @@ PRESET_MIN_PLAN: dict[str, str] = {
     "light": Subscription.Plan.FREE.value,
     "dark": Subscription.Plan.FREE.value,
     "bright_light": Subscription.Plan.STUDENT.value,
-    "bright_dark": Subscription.Plan.STUDENT.value,
+    "light_warm": Subscription.Plan.STUDENT.value,
     "dawn": Subscription.Plan.STUDENT.value,
 }
 
@@ -24,6 +24,7 @@ LEGACY_THEME_MAP: dict[str, str] = {
     "corporate": "light",
     "minimal": "light",
     "vibrant": "bright_light",
+    "bright_dark": "light_warm",
 }
 
 KNOWN_PRESET_IDS = frozenset(PRESET_MIN_PLAN.keys())
@@ -34,7 +35,7 @@ EXPORT_PALETTES: dict[str, dict[str, str]] = {
     "light": {"bg": "F7FBFF", "text": "0B1F3A", "accent": "2563EB"},
     "dark": {"bg": "0F2F5F", "text": "F7FBFF", "accent": "7DD3FC"},
     "bright_light": {"bg": "FFFFFF", "text": "0F172A", "accent": "0284C7"},
-    "bright_dark": {"bg": "030712", "text": "F8FAFC", "accent": "22D3EE"},
+    "light_warm": {"bg": "FAF9F6", "text": "1C1917", "accent": "B45309"},
     "dawn": {"bg": "FAF5FF", "text": "4C1D95", "accent": "A855F7"},
 }
 

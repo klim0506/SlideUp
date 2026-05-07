@@ -52,6 +52,7 @@ class PresentationSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "title",
+            "style",
             "theme",
             "theme_custom",
             "slides",
@@ -62,7 +63,7 @@ class PresentationSerializer(serializers.ModelSerializer):
             "created_at",
             "slide_count",
         )
-        read_only_fields = ("id", "created_at", "slide_count", "assets", "slides_unlocked")
+        read_only_fields = ("id", "created_at", "slide_count", "assets", "style", "slides_unlocked")
 
     def validate_slide_histories(self, value):
         if value is None:

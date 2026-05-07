@@ -18,7 +18,7 @@ export function AppHeader({ user, onLogout, onLibrary, active }) {
       top: 0,
       zIndex: 50,
     }}>
-      <button type="button" onClick={onLibrary || (() => navigate("/dashboard"))} style={{ display: "flex", alignItems: "center", gap: 12, padding: 0, justifySelf: "start" }}>
+      <button type="button" onClick={() => navigate("/")} style={{ display: "flex", alignItems: "center", gap: 12, padding: 0, justifySelf: "start" }}>
         <Icon name="logo" size={26} stroke={2.2} style={{ color: "var(--accent)" }} />
         <span style={{ fontSize: 22, fontWeight: 750, color: "var(--ink)", letterSpacing: "-0.01em" }}>{LEGAL.brand}</span>
       </button>

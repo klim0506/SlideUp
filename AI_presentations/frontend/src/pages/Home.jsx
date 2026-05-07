@@ -3,7 +3,7 @@ import { AppHeader } from "@/components/AppHeader";
 import AuthModal from "@/components/AuthModal";
 import SiteFooter from "@/components/SiteFooter";
 import SiteHeader from "@/components/SiteHeader";
-import { Icon, PITCH_SLIDES, STYLE_PRESETS, StylePreview, canUnlockPreset } from "@/lib/design";
+import { Icon, PITCH_SLIDES, PRESENTATION_STYLES, STYLE_PRESETS, StylePreview, canUnlockPreset } from "@/lib/design";
 import UpsellModal from "@/components/UpsellModal";
 import { freeLandingFeatureItems, studentLandingFeatureItems } from "@/lib/planLimits";
 import { getMe, logout, navigate, apiJson } from "@/lib/api";
@@ -27,6 +27,7 @@ export default function Home({ workspaceMode = false }) {
   const [prompt, setPrompt] = useState("");
   const [slideCount, setSlideCount] = useState(5);
   const [styleId, setStyleId] = useState("light");
+  const [presentationStyle, setPresentationStyle] = useState("pitch");
   const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authIntent, setAuthIntent] = useState("login");
@@ -76,6 +77,7 @@ export default function Home({ workspaceMode = false }) {
         fd.append("prompt", trimmed);
         fd.append("slides_count", String(requestedSlideCount));
         fd.append("theme", styleId);
+        fd.append("style", presentationStyle);
         fd.append("source_file", docFile);
         const data = await apiJson("/api/generate/", { method: "POST", body: fd });
         sessionStorage.removeItem("genConfig");
@@ -94,6 +96,7 @@ export default function Home({ workspaceMode = false }) {
         prompt: trimmed,
         slides_count: requestedSlideCount,
         theme: styleId,
+        style: presentationStyle,
         source_file_name: "",
         source_mime: "",
       }),
@@ -145,6 +148,8 @@ export default function Home({ workspaceMode = false }) {
         setSlideCount={setSlideCount}
         styleId={styleId}
         setStyleId={setStyleId}
+        presentationStyle={presentationStyle}
+        setPresentationStyle={setPresentationStyle}
         onCreate={handleCreate}
         docFile={docFile}
         setDocFile={setDocFile}
@@ -194,6 +199,8 @@ function Hero({
   setSlideCount,
   styleId,
   setStyleId,
+  presentationStyle,
+  setPresentationStyle,
   onCreate,
   docFile,
   setDocFile,
@@ -213,6 +220,7 @@ function Hero({
   const speechBaseRef = useRef("");
   const [speechListening, setSpeechListening] = useState(false);
   const activeStyleName = (STYLE_PRESETS.find((preset) => preset.id === styleId) || STYLE_PRESETS[0]).name;
+  const activePresentationStyleName = (PRESENTATION_STYLES.find((s) => s.id === presentationStyle) || PRESENTATION_STYLES[0]).name;
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -279,6 +287,7 @@ function Hero({
                 <h1 className="create-workspace-title">Новая презентация</h1>
                 <div className="create-workspace-meta">
                   <span>{slideCount} {slidesDeclension(slideCount)}</span>
+                  <span>{activePresentationStyleName}</span>
                   <span>{activeStyleName}</span>
                   <span>{docFile?.name || "Только описание"}</span>
                 </div>
@@ -359,6 +368,7 @@ function Hero({
                 />
 
                 <div className="hero-actions">
+                  <PresentationStylePicker value={presentationStyle} onChange={setPresentationStyle} />
                   <StylePicker value={styleId} onChange={setStyleId} userPlan={userPlan} onLockedPreset={onLockedStyle} />
                   <Stepper
                     count={slideCount}
@@ -599,6 +609,82 @@ export function StylePicker({ value, onChange, userPlan = "free", onLockedPreset
             <p className="hero-style-dropdown-hint-title">{dropdownHintPreset.name}</p>
             <p className="hero-style-dropdown-hint-text">{dropdownHintPreset.description}</p>
             <span className="hero-style-dropdown-hint-note">{dropdownHintPreset.note}</span>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PresentationStylePicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(null);
+  const ref = useRef(null);
+  const selected = PRESENTATION_STYLES.find((s) => s.id === value) || PRESENTATION_STYLES[0];
+  const hint = PRESENTATION_STYLES.find((s) => s.id === hovered) || selected;
+
+  useEffect(() => {
+    function handleOutside(e) {
+      if (!ref.current?.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
+
+  useEffect(() => {
+    if (!open) setHovered(null);
+  }, [open]);
+
+  return (
+    <div ref={ref} className={`hero-action-picker${open ? " hero-action-picker--open" : ""}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((p) => !p)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`${selected.name}`}
+        className="hero-action-picker-btn"
+        style={{ minWidth: 110 }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)", whiteSpace: "nowrap" }}>
+          {selected.name}
+        </span>
+        <Icon name="chevron-down" size={15} style={{ color: "var(--ink-3)", flexShrink: 0 }} />
+      </button>
+
+      {!open ? (
+        <div className="hero-style-desc" role="tooltip">
+          <p className="hero-style-desc-kicker">Стиль презентации</p>
+          <p className="hero-style-desc-title">{selected.name}</p>
+          <p className="hero-style-desc-text">{selected.description}</p>
+          <span className="hero-style-desc-note">{selected.note}</span>
+        </div>
+      ) : null}
+
+      {open ? (
+        <div className="hero-style-dropdown" role="listbox" aria-label="Выбор стиля презентации"
+          style={{ minWidth: 260 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "6px 6px 4px" }}>
+            {PRESENTATION_STYLES.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                role="option"
+                aria-selected={s.id === value}
+                onMouseEnter={() => setHovered(s.id)}
+                onClick={() => { onChange(s.id); setOpen(false); }}
+                className="hero-style-dropdown-row"
+                data-active={s.id === value}
+                style={{ padding: "8px 10px", borderRadius: "var(--r-sm)", display: "flex", flexDirection: "column", gap: 2, alignItems: "flex-start", textAlign: "left" }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>{s.name}</span>
+                <span style={{ fontSize: 11, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }}>{s.note}</span>
+              </button>
+            ))}
+          </div>
+          <div className="hero-style-dropdown-hint">
+            <p className="hero-style-dropdown-hint-title">{hint.name}</p>
+            <p className="hero-style-dropdown-hint-text">{hint.description}</p>
           </div>
         </div>
       ) : null}

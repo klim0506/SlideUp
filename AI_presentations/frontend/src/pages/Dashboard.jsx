@@ -324,7 +324,7 @@ function DeckGrid({ decks, onOpen, onRequestDelete, onDownload }) {
           <div style={{ padding: "14px 18px 18px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
               <span
-                style={{ ...presentationStyleChip, flex: 1, minWidth: 0 }}
+                style={presentationStyleChip}
                 title={presentationStyleCaption(deck.theme)}
               >
                 {presentationStyleCaption(deck.theme)}
@@ -564,11 +564,13 @@ const iconButton = (active) => ({
 });
 
 const presentationStyleChip = {
-  padding: "6px 10px",
-  borderRadius: 999,
+  display: "inline-block",
+  maxWidth: 116,
+  padding: "4px 8px",
+  borderRadius: "var(--r-sm)",
   background: "var(--surface-2)",
   color: "var(--ink-2)",
-  fontSize: 11,
+  fontSize: 10.5,
   fontFamily: "var(--font-sans)",
   overflow: "hidden",
   textOverflow: "ellipsis",

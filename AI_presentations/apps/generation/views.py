@@ -15,7 +15,7 @@ from .claude import ClaudePresentationClient
 from .claude_client import call_claude, get_claude_mode
 from .models import GenerationJob
 from .postprocessing import parse_json, postprocess
-from .prompts import SYSTEM_PROMPT, build_prompt
+from .prompts import KNOWN_STYLES, SYSTEM_PROMPT, build_prompt
 from .serializers import GenerationRequestSerializer
 from .source_material import process_uploaded_source
 
@@ -27,6 +27,14 @@ SINGLE_SLIDE_SYSTEM_PROMPT = (
     "Edit exactly one slide according to the user's instruction. "
     "Return only valid JSON for one slide object. "
     "The slide must include type, title, bullets, and content fields."
+)
+
+NEW_SLIDE_SYSTEM_PROMPT = (
+    "You are Slidegen, an expert presentation architect. "
+    "Create exactly one NEW slide that fits the existing deck context and the user's instruction. "
+    "Return only valid JSON for one slide object, not a full deck. "
+    "The slide must include type, title, bullets, and content fields. "
+    "Do not include markdown fences, comments, or explanations."
 )
 
 DECK_ASSIST_SYSTEM_PROMPT = (
@@ -169,6 +177,8 @@ class GeneratePresentationView(APIView):
             request.user if _is_authenticated(request) else None,
             request.data.get("theme", "light") or "light",
         )
+        raw_style = (request.data.get("style") or "pitch").strip()
+        style = raw_style if raw_style in KNOWN_STYLES else "pitch"
         slides_count = _parse_slides_count(request.data.get("slides_count", 8))
         session_key = _ensure_session_key(request)
 
@@ -223,7 +233,7 @@ class GeneratePresentationView(APIView):
         try:
             data = _call_claude_with_json_retry(
                 SYSTEM_PROMPT,
-                build_prompt(topic=topic, slides_count=slides_count, context=context_extra, has_image=bool(image_sources)),
+                build_prompt(topic=topic, slides_count=slides_count, context=context_extra, has_image=bool(image_sources), style=style),
                 lambda raw: postprocess(raw, expected_slides_count=slides_count),
                 image_sources=image_sources,
             )
@@ -254,6 +264,7 @@ class GeneratePresentationView(APIView):
             user=user,
             session_key=session_key,
             title=data["title"],
+            style=style,
             theme=theme,
             slides=deck_slides,
             slides_unlocked=slides_unlocked,
@@ -279,6 +290,7 @@ class GeneratePresentationView(APIView):
             "title": presentation.title,
             "slides": presentation.slides,
             "theme": presentation.theme,
+            "style": presentation.style,
             "slides_unlocked": presentation.slides_unlocked,
         }
         if user and usage_check and usage_check.get("capped"):
@@ -407,6 +419,7 @@ class AssistDeckView(APIView):
         instruction = (request.data.get("instruction") or "").strip()
         presentation_title = (request.data.get("presentation_title") or "Presentation").strip()
         presentation_id = request.data.get("presentation_id")
+        mode = (request.data.get("mode") or "deck").strip()
         _ensure_session_key(request)
         job = _start_job(
             request=request,
@@ -459,6 +472,57 @@ class AssistDeckView(APIView):
             _strip_internal_slide_keys(s) if isinstance(s, dict) else s for s in slides
         ]
         slide_count = len(stripped_slides)
+
+        if mode == "append_slide":
+            user_prompt = (
+                f"Presentation title: {presentation_title}\n"
+                f"Instruction for the new slide: {instruction}\n"
+                "Create exactly ONE additional slide that should be appended after the current deck. "
+                "Use the current deck only as context; do not rewrite existing slides.\n"
+                f"Current deck JSON:\n"
+                f"{json.dumps({'title': presentation_title, 'slides': stripped_slides}, ensure_ascii=False)}"
+            )
+
+            try:
+                new_slide = _call_claude_with_json_retry(
+                    NEW_SLIDE_SYSTEM_PROMPT,
+                    user_prompt,
+                    lambda raw: _postprocess_refined_slide(raw, presentation_title),
+                )
+            except ValueError as exc:
+                _finish_job(
+                    job,
+                    status_value=GenerationJob.Status.ERROR,
+                    started_at=started_at,
+                    error_message=str(exc),
+                )
+                return Response(
+                    {"detail": str(exc)},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+
+            if user:
+                presentation = None
+                if presentation_id:
+                    presentation = Presentation.objects.filter(
+                        pk=presentation_id,
+                        user=user,
+                    ).first()
+                increment_usage(
+                    user,
+                    action=UsageLog.Action.REFINE,
+                    slides_spent=1,
+                    presentation=presentation,
+                )
+
+            _finish_job(
+                job,
+                status_value=GenerationJob.Status.SUCCESS,
+                started_at=started_at,
+            )
+
+            return Response({"slide": new_slide}, status=status.HTTP_200_OK)
+
         user_prompt = (
             f"Presentation title: {presentation_title}\n"
             f"Required slide count (unchanged): {slide_count}\n"
