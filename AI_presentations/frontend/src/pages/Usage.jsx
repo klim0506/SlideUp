@@ -89,7 +89,7 @@ export default function Usage() {
       if (err.status === 401) {
         setAuthOpen(true);
       } else {
-        setError(err.message || "Не удалось загрузить лимиты");
+        setError(err.message || "Данные по тарифу сейчас не подгрузились — обновите страницу чуть позже.");
       }
     } finally {
       setLoading(false);
@@ -110,7 +110,7 @@ export default function Usage() {
       });
       window.location.href = data.confirmation_url;
     } catch (err) {
-      setError(err.message || "Не удалось создать платеж");
+      setError(err.message || "Оплата сейчас не стартовала — попробуйте ещё раз через минуту.");
       setPaying("");
     }
   }
@@ -135,11 +135,7 @@ export default function Usage() {
           </button>
         </div>
 
-        {error && (
-          <div style={{ padding: "14px 16px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "var(--r-md)", color: "#b91c1c", marginBottom: 20 }}>
-            {error}
-          </div>
-        )}
+        {error && <div className="su-user-hint" style={{ marginBottom: 20 }}>{error}</div>}
 
         {loading ? (
           <LoadingSkeleton />

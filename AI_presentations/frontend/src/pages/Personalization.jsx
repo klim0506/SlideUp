@@ -300,7 +300,7 @@ export default function Personalization() {
       const data = await apiJson("/api/color-schemes/");
       setSchemes(Array.isArray(data) ? data : (data.results ?? []));
     } catch (err) {
-      setError(err.message || "Ошибка загрузки схем.");
+      setError(err.message || "Схемы сейчас не загрузились — обновите страницу чуть позже.");
     } finally {
       setLoading(false);
     }
@@ -416,9 +416,7 @@ export default function Personalization() {
               </button>
             </div>
 
-            {error && (
-              <div style={{ color: "var(--red, #dc2626)", fontSize: 13, marginBottom: 16 }}>{error}</div>
-            )}
+            {error && <div className="su-user-hint" style={{ marginBottom: 16 }}>{error}</div>}
 
             {/* Scheme grid */}
             <div

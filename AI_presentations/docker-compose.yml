@@ -90,6 +90,8 @@ services:
     command: npm run dev -- --host 0.0.0.0 --port 5173
     volumes:
       - ./frontend:/app
+      # planLimits.js imports ../../../shared/plan_limits.json → /shared/plan_limits.json in container
+      - ./shared:/shared:ro
       - frontend_node_modules:/app/node_modules
     depends_on:
       backend:

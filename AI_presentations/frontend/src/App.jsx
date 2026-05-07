@@ -70,7 +70,7 @@ function App() {
     return <Generating />;
   }
   if (route.name === "create") {
-    return <Home workspaceMode />;
+    return <PresentationView createMode />;
   }
   if (route.name === "legal") {
     return <LegalPage />;

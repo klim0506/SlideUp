@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.billing.models import UsageLog
-from apps.billing.utils import check_and_spend_slides, increment_usage
+from apps.billing.utils import check_and_spend_slides, check_and_spend_slides_up_to, increment_usage
 from apps.presentations.models import Presentation
 from apps.presentations.themes import sanitize_generation_theme
 
@@ -204,11 +204,12 @@ class GeneratePresentationView(APIView):
             topic = f'Презентация по материалам файла «{uploaded.name}».'
 
         user = request.user if _is_authenticated(request) else None
+        usage_check = None
         if user:
-            usage_check = check_and_spend_slides(
+            usage_check = check_and_spend_slides_up_to(
                 user,
                 action=UsageLog.Action.GENERATE,
-                slides_count=slides_count,
+                slides_requested=slides_count,
             )
             if not usage_check["allowed"]:
                 _finish_job(
@@ -242,12 +243,20 @@ class GeneratePresentationView(APIView):
         if image_sources:
             assets = {"images": image_sources}
 
+        deck_slides = data["slides"]
+        slides_unlocked = None
+        if user and usage_check:
+            spent = int(usage_check.get("spent") or 0)
+            if spent > 0 and spent < len(deck_slides):
+                slides_unlocked = spent
+
         presentation = Presentation.objects.create(
             user=user,
             session_key=session_key,
             title=data["title"],
             theme=theme,
-            slides=data["slides"],
+            slides=deck_slides,
+            slides_unlocked=slides_unlocked,
             assets=assets,
         )
 
@@ -255,7 +264,7 @@ class GeneratePresentationView(APIView):
             increment_usage(
                 user,
                 action=UsageLog.Action.GENERATE,
-                slides_spent=slides_count,
+                slides_spent=int(usage_check["spent"]),
                 presentation=presentation,
             )
 
@@ -265,15 +274,16 @@ class GeneratePresentationView(APIView):
             started_at=started_at,
         )
 
-        return Response(
-            {
-                "id": str(presentation.id),
-                "title": presentation.title,
-                "slides": presentation.slides,
-                "theme": presentation.theme,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        body = {
+            "id": str(presentation.id),
+            "title": presentation.title,
+            "slides": presentation.slides,
+            "theme": presentation.theme,
+            "slides_unlocked": presentation.slides_unlocked,
+        }
+        if user and usage_check and usage_check.get("capped"):
+            body["slides_billing_capped"] = True
+        return Response(body, status=status.HTTP_201_CREATED)
 
 
 class RefineSlideView(APIView):

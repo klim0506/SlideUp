@@ -87,12 +87,72 @@ def check_and_spend_slides(user, action, slides_count=1) -> dict:
         available_after_spend = max(available - slides_count, 0)
         if available_after_spend <= 0:
             _notify_slide_limit_exhausted(user)
-        return _usage_response(
-            allowed=True,
-            reason="",
-            available=available_after_spend,
-            show_upsell=False,
+        return {
+            **_usage_response(
+                allowed=True,
+                reason="",
+                available=available_after_spend,
+                show_upsell=False,
+            ),
+            "spent": slides_count,
+            "capped": False,
+        }
+
+
+def check_and_spend_slides_up_to(user, action, slides_requested) -> dict:
+    """Spend monthly credits up to slides_requested (capped by balance). Used for deck generation."""
+    slides_requested = max(int(slides_requested or 1), 1)
+    period_start = _current_period_start()
+
+    with transaction.atomic():
+        slide_credit, _ = SlideCredit.objects.select_for_update().get_or_create(
+            user=user,
+            defaults={"monthly_limit": free_monthly_slides(), "period_start": period_start},
         )
+        monthly_limit = _get_plan_limit(user, "monthly_slides")
+
+        if slide_credit.period_start < period_start:
+            slide_credit.period_start = period_start
+            slide_credit.used_this_month = 0
+            slide_credit.monthly_limit = monthly_limit
+            slide_credit.save(
+                update_fields=("period_start", "used_this_month", "monthly_limit")
+            )
+        elif slide_credit.monthly_limit != monthly_limit:
+            slide_credit.monthly_limit = monthly_limit
+            slide_credit.save(update_fields=("monthly_limit",))
+
+        available = slide_credit.available()
+        if available < 1:
+            _notify_slide_limit_exhausted(user)
+            return {
+                **_usage_response(
+                    allowed=False,
+                    reason="slide_limit_exceeded",
+                    available=available,
+                    show_upsell=True,
+                ),
+                "spent": 0,
+                "capped": False,
+            }
+
+        spend = min(slides_requested, available)
+        SlideCredit.objects.filter(pk=slide_credit.pk).update(
+            used_this_month=F("used_this_month") + spend
+        )
+        available_after_spend = max(available - spend, 0)
+        if available_after_spend <= 0:
+            _notify_slide_limit_exhausted(user)
+        return {
+            **_usage_response(
+                allowed=True,
+                reason="",
+                available=available_after_spend,
+                show_upsell=False,
+            ),
+            "spent": spend,
+            "capped": spend < slides_requested,
+        }
 
 
 def check_pdf_export(user) -> dict:

@@ -30,12 +30,23 @@ export const Icon = ({ name, size = 16, stroke = 1.7, style, ...rest }) => {
     case "chevron-down": return <svg {...props}><path d="M6 9l6 6 6-6" /></svg>;
     case "chevron-left": return <svg {...props}><path d="M15 18l-6-6 6-6" /></svg>;
     case "chevron-right": return <svg {...props}><path d="M9 18l6-6-6-6" /></svg>;
+    case "code": return <svg {...props}><path d="M16 18l6-6-6-6M8 6l-6 6 6 6" /></svg>;
     case "x": return <svg {...props}><path d="M18 6L6 18M6 6l12 12" /></svg>;
     case "check": return <svg {...props}><path d="M20 6L9 17l-5-5" /></svg>;
     case "edit": return <svg {...props}><path d="M11 4H4v16h16v-7M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;
     case "share": return <svg {...props}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg>;
     case "download": return <svg {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>;
     case "menu": return <svg {...props}><path d="M3 6h18M3 12h18M3 18h18" /></svg>;
+    /** Сетка слайдов (как в Google Slides). */
+    case "layout-grid":
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={style} {...rest}>
+          <rect x="3" y="3" width="7.5" height="7.5" rx="1.5" opacity="0.92" />
+          <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" opacity="0.92" />
+          <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" opacity="0.92" />
+          <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" opacity="0.92" />
+        </svg>
+      );
     /** Правая боковая панель свёрнута — узкая полоска (как в Figma / ChatGPT). */
     case "panel-right-narrow":
       return (

@@ -31,7 +31,7 @@ function AuthModal({ open, onClose, onSuccess }) {
             onSuccess?.();
             onClose?.();
           } catch (err) {
-            setError(err.message || "Не удалось войти через Google.");
+            setError(err.message || "Вход через Google сейчас не сработал — попробуйте ещё раз.");
           } finally {
             setLoading(false);
           }
@@ -90,7 +90,7 @@ function AuthModal({ open, onClose, onSuccess }) {
       onSuccess?.();
       onClose?.();
     } catch (err) {
-      setError(err.message || "Не удалось войти. Проверьте email и пароль.");
+      setError(err.message || "Пароль или email не подошли — проверьте и попробуйте снова.");
     } finally {
       setLoading(false);
     }
@@ -157,11 +157,7 @@ function AuthModal({ open, onClose, onSuccess }) {
             <input className="su-input" type="password" placeholder="Минимум 8 символов" value={password} onChange={(event) => setPassword(event.target.value)} />
           </div>
 
-          {error ? (
-            <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "var(--r-md)", fontSize: 13, color: "#b91c1c" }}>
-              {error}
-            </div>
-          ) : null}
+          {error ? <div className="su-user-hint">{error}</div> : null}
 
           <button type="submit" disabled={loading} className="su-btn su-btn-primary" style={{ justifyContent: "center", padding: 14, marginTop: 6, fontSize: 15, opacity: loading ? 0.6 : 1 }}>
             {loading ? "Проверяем…" : mode === "login" ? "Войти" : "Зарегистрироваться"}

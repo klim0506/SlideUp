@@ -99,6 +99,7 @@ function CompareOverlay({ open, leftSlide, rightSlide, slideIndex, total, preset
 export function SlideHistoryTab({
   slideIndex,
   slidesLen,
+  lastUnlockedSlideIndex,
   onSlideIndexChange,
   versionsChrono,
   currentSlide,
@@ -121,6 +122,10 @@ export function SlideHistoryTab({
   const [aiFocusChrono, setAiFocusChrono] = useState(0);
   const [draft, setDraft] = useState("");
   const listEndRef = useRef(null);
+  const lastUnlocked =
+    typeof lastUnlockedSlideIndex === "number" && Number.isFinite(lastUnlockedSlideIndex)
+      ? Math.min(Math.max(0, lastUnlockedSlideIndex), Math.max(0, slidesLen - 1))
+      : Math.max(0, slidesLen - 1);
 
   useEffect(() => {
     if (!versionsChrono.length) {
@@ -158,7 +163,7 @@ export function SlideHistoryTab({
             type="button"
             className="su-btn su-btn-outline"
             style={{ padding: "2px 8px", fontSize: 12, minWidth: 32 }}
-            disabled={slideIndex >= slidesLen - 1 || busy}
+            disabled={slideIndex >= lastUnlocked || busy}
             onClick={() => onSlideIndexChange(slideIndex + 1)}
             aria-label="Следующий слайд"
           >
@@ -166,6 +171,12 @@ export function SlideHistoryTab({
           </button>
         </div>
       </div>
+
+      {lastUnlocked < slidesLen - 1 ? (
+        <p style={{ fontSize: 11, color: "var(--ink-3)", margin: "-4px 0 0", lineHeight: 1.35 }}>
+          Слайды {lastUnlocked + 2}–{slidesLen} в превью: лимит слайдов на этом тарифе.
+        </p>
+      ) : null}
 
       {!versionsChrono.length ? (
         <p style={{ fontSize: 12, color: "var(--ink-3)", margin: 0 }}>История появится после первого сохранения версии.</p>

@@ -139,6 +139,17 @@ CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
+
+# Генерация: принудительный режим claude ("api" | "cli"). Пусто — брать из Generation settings в админке.
+_raw_gen_mode = os.getenv("GENERATION_CLAUDE_MODE", "").strip().lower()
+GENERATION_CLAUDE_MODE = _raw_gen_mode if _raw_gen_mode in ("api", "cli") else ""
+
+# В режиме CLI не падать на API, если бинарник не найден (удобно для локальной отладки без ключа).
+GENERATION_CLI_STRICT = os.getenv("GENERATION_CLI_STRICT", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "")

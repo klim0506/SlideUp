@@ -4,6 +4,7 @@ import AuthModal from "@/components/AuthModal";
 import UpsellModal from "@/components/UpsellModal";
 import {
   Icon,
+  PITCH_SLIDES,
   STYLE_PRESETS,
   CUSTOM_THEME_ID,
   buildCustomPreset,
@@ -13,6 +14,7 @@ import {
   normalizeLegacyThemeId,
   presentationStyleCaption,
 } from "@/lib/design";
+import { HERO_SOURCE_ACCEPT, Stepper, StylePicker, isHeroPromptValid, slidesDeclension } from "@/pages/Home";
 import { SlideHistoryTab } from "@/components/presentation/SlideHistoryTab";
 import { SlideVersionsColumn } from "@/components/presentation/SlideVersionsColumn";
 import { apiFetch, apiJson, clearTokens, getAccessToken, getMe, logout, navigate } from "@/lib/api";
@@ -24,16 +26,41 @@ import {
   normalizeHistoriesMap,
   newSlideSid,
 } from "@/lib/slideHistory";
-import { DeckSlideThumbCanvas, getSlideBullets, getSlideStats, getSlideSubtitle, getSlideTitle } from "@/lib/slidePreview";
+import { DeckSlideThumbCanvas, getSlideBulletMarker, getSlideBullets, getSlideStats, getSlideSubtitle, getSlideTitle } from "@/lib/slidePreview";
 
 const VIEWER_STORAGE_PREFIX = "slideup-viewer-appearance:";
+
+/** Масштаб текста и элементов внутри слайда (доля от базового размера). */
+const FONT_SCALE_MIN = 0.7;
+const FONT_SCALE_MAX = 1.3;
+
+function clampFontScale(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, n));
+}
+
+const PRESENTATION_TITLE_DISPLAY_MAX = 30;
+
+/** Короткая подпись в шапке; полное имя — в title / aria-label. */
+function truncatePresentationTitleDisplay(title) {
+  const raw = (title || "").trim() || "Без названия";
+  const chars = [...raw];
+  if (chars.length <= PRESENTATION_TITLE_DISPLAY_MAX) return raw;
+  return `${chars.slice(0, PRESENTATION_TITLE_DISPLAY_MAX).join("")}...`;
+}
+
+/** Рейка заголовка: полоска + зазор до текста — общий левый край шапки, подзаголовка и ленты слайдов. */
+const PRESENTATION_TITLE_RAIL_BAR_PX = 3;
+const PRESENTATION_TITLE_RAIL_GAP_PX = 12;
+const PRESENTATION_TITLE_RAIL_SLOT_PX = PRESENTATION_TITLE_RAIL_BAR_PX + PRESENTATION_TITLE_RAIL_GAP_PX;
 
 /** Режим отображения счётчика слайдов в просмотрщике. */
 const PAGE_NUMBER_MODE_NONE = "none";
 const PAGE_NUMBER_MODE_CORNER_BR = "corner_br";
 const PAGE_NUMBER_MODE_CORNER_TR = "corner_tr";
 
-const DEFAULT_PAGE_NUMBER_MODE = PAGE_NUMBER_MODE_CORNER_TR;
+const DEFAULT_PAGE_NUMBER_MODE = PAGE_NUMBER_MODE_CORNER_BR;
 
 const PAGE_NUMBER_MODES_VALID = new Set([
   PAGE_NUMBER_MODE_NONE,
@@ -70,14 +97,333 @@ function scaledClamp(minPx, vw, maxPx, scale) {
   return `clamp(${minPx * scale}px, ${vw * scale}vw, ${maxPx * scale}px)`;
 }
 
-export default function PresentationView({ id, publicView = false }) {
+export default function PresentationView(props) {
+  if (props.createMode) {
+    return <CreatePresentationWorkspace />;
+  }
+  return <ExistingPresentationView {...props} />;
+}
+
+function CreatePresentationWorkspace() {
+  const [user, setUser] = useState(null);
+  const [prompt, setPrompt] = useState("");
+  const [slideCount, setSlideCount] = useState(5);
+  const [styleId, setStyleId] = useState("light");
+  const [docFile, setDocFile] = useState(null);
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createErr, setCreateErr] = useState("");
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authIntent, setAuthIntent] = useState("login");
+  const [upsellOpen, setUpsellOpen] = useState(false);
+  const [slideAreaEl, setSlideAreaEl] = useState(null);
+  const [slideDims, setSlideDims] = useState(null);
+  const fileInputRef = useRef(null);
+  const pendingSlideCountAfterAuthRef = useRef(null);
+
+  const sampleSlide = useMemo(
+    () => PITCH_SLIDES.find((slide) => slide.kind === "cover") || PITCH_SLIDES[0] || null,
+    [],
+  );
+  const previewPreset = useMemo(
+    () => STYLE_PRESETS.find((item) => item.id === styleId) || STYLE_PRESETS[0],
+    [styleId],
+  );
+
+  useEffect(() => {
+    getMe().then(setUser).catch(() => setUser(null));
+  }, []);
+
+  useEffect(() => {
+    const plan = user?.plan || "free";
+    const preset = STYLE_PRESETS.find((p) => p.id === styleId);
+    if (preset && !canUnlockPreset(plan, preset)) {
+      setStyleId("light");
+    }
+  }, [user?.plan, styleId]);
+
+  useEffect(() => {
+    if (!slideAreaEl) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width <= 0 || height <= 0) return;
+      const hByWidth = width * 9 / 16;
+      if (hByWidth <= height) {
+        setSlideDims({ w: Math.floor(width), h: Math.floor(hByWidth) });
+      } else {
+        setSlideDims({ w: Math.floor(height * 16 / 9), h: Math.floor(height) });
+      }
+    });
+    ro.observe(slideAreaEl);
+    return () => ro.disconnect();
+  }, [slideAreaEl]);
+
+  async function handleCreate(options = {}) {
+    setCreateErr("");
+    if (!isHeroPromptValid(prompt)) {
+      setCreateErr("Расскажите тему чуть подробнее — от 4 символов без лишних пробелов по краям.");
+      return;
+    }
+    const trimmed = prompt.trim();
+    const requestedSlideCount = options.slideCount ?? slideCount;
+
+    if (docFile) {
+      setCreateBusy(true);
+      try {
+        const fd = new FormData();
+        fd.append("prompt", trimmed);
+        fd.append("slides_count", String(requestedSlideCount));
+        fd.append("theme", styleId);
+        fd.append("source_file", docFile);
+        const data = await apiJson("/api/generate/", { method: "POST", body: fd });
+        sessionStorage.removeItem("genConfig");
+        navigate(`/presentation/${data.id}`);
+      } catch (e) {
+        setCreateErr(e?.message || "Презентация не создалась — можно попробовать ещё раз чуть позже.");
+      } finally {
+        setCreateBusy(false);
+      }
+      return;
+    }
+
+    sessionStorage.setItem(
+      "genConfig",
+      JSON.stringify({
+        prompt: trimmed,
+        slides_count: requestedSlideCount,
+        theme: styleId,
+        source_file_name: "",
+        source_mime: "",
+      }),
+    );
+    navigate("/generating");
+  }
+
+  async function handleAuthSuccess() {
+    const pending = pendingSlideCountAfterAuthRef.current;
+    const intent = authIntent;
+    pendingSlideCountAfterAuthRef.current = null;
+    setAuthIntent("login");
+
+    if (pending != null) setSlideCount(pending);
+
+    try {
+      const me = await getMe();
+      setUser(me);
+    } catch {
+      setUser(null);
+    }
+
+    if (intent === "continue-project") {
+      await handleCreate({ slideCount: pending ?? slideCount });
+      return;
+    }
+
+    navigate("/dashboard");
+  }
+
+  const activeStyleName = previewPreset?.name || "Светлый";
+  const canSubmitCreate = isHeroPromptValid(prompt);
+
+  return (
+    <div
+      className="su-page editor-dark"
+      style={{ height: "100vh", overflow: "hidden", background: "var(--bg)", color: "var(--ink)", display: "flex", flexDirection: "column" }}
+    >
+      <AppHeader user={user} active="library" onLibrary={() => navigate("/dashboard")} onLogout={() => { logout(); navigate("/"); }} />
+
+      <main
+        className="viewer-layout"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          width: "100%",
+          overflow: "hidden",
+          padding: "20px 24px 20px",
+        }}
+      >
+        <section style={{ minWidth: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ marginBottom: 12, flexShrink: 0, minWidth: 0, padding: "4px 2px 0" }}>
+            <div style={{ display: "flex", alignItems: "center", minWidth: 0, gap: 12, marginBottom: 6 }}>
+              <h1
+                style={{
+                  margin: 0,
+                  padding: 0,
+                  fontFamily: "var(--font-display)",
+                  fontSize: "clamp(22px, 2.65vw, 30px)",
+                  lineHeight: 1.1,
+                  letterSpacing: "-0.035em",
+                  fontWeight: 750,
+                  wordBreak: "break-word",
+                }}
+              >
+                Новая презентация
+              </h1>
+            </div>
+            <div style={{ marginTop: 5, display: "flex", gap: 10, alignItems: "center", color: "var(--ink-3)", fontSize: 12, flexWrap: "wrap" }}>
+              <span>{slideCount} {slidesDeclension(slideCount)}</span>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span>{activeStyleName}</span>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span>{docFile?.name || "Только описание"}</span>
+            </div>
+          </div>
+
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              background: "rgba(255,255,255,.72)",
+              border: "1px solid var(--line)",
+              borderRadius: 16,
+              padding: 16,
+              boxShadow: "0 1px 2px rgba(32,33,36,.04), 0 10px 28px rgba(32,33,36,.06)",
+              backdropFilter: "blur(10px)",
+            }}
+          >
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.15fr) minmax(360px, .85fr)", gap: 10, flex: 1, minHeight: 0 }}>
+              <div
+                ref={setSlideAreaEl}
+                style={{
+                  minHeight: 320,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: 10,
+                  background: "linear-gradient(180deg, rgba(255,255,255,.45), rgba(255,255,255,.18))",
+                  border: "1px solid color-mix(in srgb, var(--line) 88%, white)",
+                }}
+              >
+                {slideDims && sampleSlide ? (
+                  <SlideCanvas
+                    slide={sampleSlide}
+                    index={0}
+                    total={slideCount}
+                    preset={previewPreset}
+                    fontScale={1}
+                    pageNumberMode={DEFAULT_PAGE_NUMBER_MODE}
+                    watermarkMode={DEFAULT_WATERMARK_MODE}
+                    slideWidth={slideDims.w}
+                    slideHeight={slideDims.h}
+                    onSlideChange={null}
+                  />
+                ) : null}
+              </div>
+
+              <div
+                style={{
+                  minHeight: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                  padding: 14,
+                  borderRadius: 10,
+                  background: "var(--surface)",
+                  border: "1px solid var(--line)",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 10 }}>
+                    Запрос к SlideUp
+                  </div>
+                  <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 13, lineHeight: 1.45 }}>
+                    Опишите тему, аудиторию и результат. Мы оставили тот же workspace, что и в редакторе, но вместо готовых слайдов здесь форма создания.
+                  </p>
+                </div>
+
+                <textarea
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmitCreate && !createBusy) {
+                      void handleCreate();
+                    }
+                  }}
+                  placeholder="Например: стратегия запуска ИИ-продукта для B2B SaaS на 5 слайдов"
+                  className="hero-textarea"
+                  style={{ minHeight: 220, margin: 0, flex: 1 }}
+                />
+
+                {docFile ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--accent-soft)", borderRadius: "var(--r-md)", fontSize: 13 }}>
+                    <Icon name="paperclip" size={13} style={{ color: "var(--accent)" }} />
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-2)" }}>{docFile.name}</span>
+                    <button type="button" onClick={() => setDocFile(null)} style={{ color: "var(--ink-3)" }}>
+                      <Icon name="x" size={12} />
+                    </button>
+                  </div>
+                ) : null}
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={HERO_SOURCE_ACCEPT}
+                  style={{ display: "none" }}
+                  onChange={(event) => setDocFile(event.target.files?.[0] ?? null)}
+                />
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="hero-attach-btn"
+                      aria-label="Вложить файл"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Icon name="paperclip" size={18} stroke={2} />
+                    </button>
+                    <StylePicker value={styleId} onChange={setStyleId} userPlan={user?.plan || "free"} onLockedPreset={() => setUpsellOpen(true)} />
+                    <Stepper
+                      count={slideCount}
+                      setCount={setSlideCount}
+                      isLoggedIn={Boolean(user)}
+                      onRequestMoreSlidesLogin={(nextCount) => {
+                        pendingSlideCountAfterAuthRef.current = nextCount;
+                        setAuthIntent("continue-project");
+                        setAuthOpen(true);
+                      }}
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    className="su-btn su-btn-accent"
+                    disabled={createBusy || !canSubmitCreate}
+                    onClick={() => void handleCreate()}
+                    style={{ fontSize: 15 }}
+                  >
+                    {createBusy ? "Создаём…" : <>Создать <Icon name="arrow-right" size={16} /></>}
+                  </button>
+                </div>
+
+                {createErr ? <div className="su-user-hint" style={{ marginTop: 4 }}>{createErr}</div> : (
+                  <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                    Ctrl/Cmd + Enter для быстрого запуска генерации.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSuccess={handleAuthSuccess} />
+      <UpsellModal open={upsellOpen} onClose={() => setUpsellOpen(false)} />
+    </div>
+  );
+}
+
+function ExistingPresentationView({ id, publicView = false }) {
   const canvasRef = useRef(null);
   const pendingDownloadRef = useRef(null);
   const titleEditDismissRef = useRef(false);
   const [slideAreaEl, setSlideAreaEl] = useState(null);
   const [slideDims, setSlideDims] = useState(null);
-  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
-
   const [presentation, setPresentation] = useState(null);
   const [theme, setTheme] = useState("light");
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -96,7 +442,8 @@ export default function PresentationView({ id, publicView = false }) {
   const [sessionExpired, setSessionExpired] = useState(false);
   const [presentationReloadNonce, setPresentationReloadNonce] = useState(0);
 
-  const [editorSidebarPanel, setEditorSidebarPanel] = useState(null);
+  const [designModalOpen, setDesignModalOpen] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [displayThemeId, setDisplayThemeId] = useState("");
   const [customColorDraft, setCustomColorDraft] = useState(null);
   const [themeSaveBusy, setThemeSaveBusy] = useState(false);
@@ -114,6 +461,19 @@ export default function PresentationView({ id, publicView = false }) {
   const [persistBusy, setPersistBusy] = useState(false);
 
   const slides = Array.isArray(presentation?.slides) ? presentation.slides : [];
+
+  const unlockedSlideCount = useMemo(() => {
+    const len = slides.length;
+    if (!len) return 0;
+    const raw = presentation?.slides_unlocked;
+    if (raw == null || raw === "") return len;
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n) || n < 1) return len;
+    return Math.min(n, len);
+  }, [presentation?.slides_unlocked, slides.length]);
+
+  const lastUnlockedSlideIndex = Math.max(0, unlockedSlideCount - 1);
+
   const userPlan = user?.plan || "free";
 
   const normalizedDeckTheme = useMemo(
@@ -173,7 +533,7 @@ export default function PresentationView({ id, publicView = false }) {
       ...(merged.accent ? { accent: merged.accent } : {}),
     };
     if (Object.keys(theme_custom).length === 0) {
-      setNotice("Задайте хотя бы один цвет (#RRGGBB).");
+      setNotice("Укажите хотя бы один цвет в формате #RRGGBB.");
       return;
     }
     setThemeSaveBusy(true);
@@ -187,16 +547,13 @@ export default function PresentationView({ id, publicView = false }) {
       setTheme(data.theme || CUSTOM_THEME_ID);
       setNotice("Тема сохранена в файле презентации.");
     } catch (err) {
-      setNotice(err.message || "Не удалось сохранить тему.");
+      setNotice(err.message || "Тему сейчас не удалось сохранить — попробуйте ещё раз.");
     } finally {
       setThemeSaveBusy(false);
     }
   }, [publicView, presentation?.id, userPlan, id]);
 
   const selectedSlide = slides[currentSlide] || null;
-  const sidebarOverlay = viewportWidth < 1280;
-  const sidebarPanelWidth = Math.max(280, Math.min(EDITOR_PANEL_WIDTH, viewportWidth - 120));
-
   const slideHistoriesMap = useMemo(() => normalizeHistoriesMap(presentation?.slide_histories), [presentation?.slide_histories]);
 
   const persistDeckPatch = useCallback(
@@ -216,7 +573,7 @@ export default function PresentationView({ id, publicView = false }) {
         setPresentation(data);
         if (successNotice) setNotice(successNotice);
       } catch (err) {
-        const msg = err.message || "Не удалось сохранить.";
+        const msg = err.message || "Изменения не сохранились — попробуйте ещё раз.";
         setNotice(msg);
         if (err.status === 429 || err.data?.show_upsell) setUpsellOpen(true);
       } finally {
@@ -241,16 +598,13 @@ export default function PresentationView({ id, publicView = false }) {
   }, [presentation?.slides, presentation?.slide_histories]);
 
   useEffect(() => {
-    if (!slides.length) return;
-    setHistorySlideIndex((idx) => Math.min(Math.max(0, idx), slides.length - 1));
-  }, [slides.length]);
+    setHistorySlideIndex((idx) => Math.min(Math.max(0, idx), lastUnlockedSlideIndex));
+  }, [lastUnlockedSlideIndex, slides.length]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const handleResize = () => setViewportWidth(window.innerWidth);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
+    if (!slides.length) return;
+    setCurrentSlide((v) => Math.min(v, lastUnlockedSlideIndex));
+  }, [slides.length, lastUnlockedSlideIndex]);
 
   useEffect(() => {
     if (!presentation?.id || publicView) return;
@@ -278,7 +632,10 @@ export default function PresentationView({ id, publicView = false }) {
     persistDeckPatch,
   ]);
 
-  const historySlideSafe = Math.min(Math.max(0, historySlideIndex), Math.max(0, slides.length - 1));
+  const historySlideSafe = Math.min(
+    Math.max(0, historySlideIndex),
+    Math.max(0, Math.min(slides.length, unlockedSlideCount) - 1),
+  );
 
   const historyVersions = useMemo(() => {
     const s = slides[historySlideSafe];
@@ -291,6 +648,14 @@ export default function PresentationView({ id, publicView = false }) {
     if (!s?.[SLIDE_SID_KEY]) return [];
     return slideHistoriesMap[s[SLIDE_SID_KEY]] || [];
   }, [slides, currentSlide, slideHistoriesMap]);
+
+  const appearanceHasOverrides = Boolean(
+    (displayThemeId !== "" && normalizeLegacyThemeId(displayThemeId) !== normalizedDeckTheme) ||
+      (Boolean(customColorDraft) && effectiveThemeId === CUSTOM_THEME_ID) ||
+      fontScale !== 1 ||
+      pageNumberMode !== DEFAULT_PAGE_NUMBER_MODE ||
+      watermarkMode !== DEFAULT_WATERMARK_MODE,
+  );
 
   const slideForCanvas = useMemo(() => {
     if (historyPreviewChrono == null || !selectedSlide?.[SLIDE_SID_KEY]) return selectedSlide;
@@ -360,7 +725,7 @@ export default function PresentationView({ id, publicView = false }) {
         if (data.title && data.title !== presentation.title) patch.title = data.title;
         await persistDeckPatch(patch, "Презентация обновлена — у каждого слайда новая версия в истории.");
       } catch (err) {
-        setNotice(err.message || "Не удалось применить ИИ к презентации.");
+        setNotice(err.message || "ИИ сейчас не смог обновить всю презентацию — можно повторить запрос позже.");
         if (err.status === 429 || err.data?.show_upsell) setUpsellOpen(true);
         throw err;
       } finally {
@@ -399,7 +764,7 @@ export default function PresentationView({ id, publicView = false }) {
         await applyRefinedSlideAtIndex(slideIndex, slide, `ИИ: ${short}`, "ai");
         setLocalAiMessages((m) => [...m, { role: "assistant", text: "Готово — изменения сохранены как новая версия этого слайда." }]);
       } catch (err) {
-        setLocalAiMessages((m) => [...m, { role: "assistant", text: err.message || "Запрос не выполнен." }]);
+        setLocalAiMessages((m) => [...m, { role: "assistant", text: err.message || "Запрос не прошёл — попробуйте переформулировать или повторить чуть позже." }]);
         if (err.status === 429 || err.data?.show_upsell) setUpsellOpen(true);
       } finally {
         setLocalAiBusy(false);
@@ -437,7 +802,7 @@ export default function PresentationView({ id, publicView = false }) {
         await applyRefinedSlideAtIndex(slideIndex, slide, `ИИ: ${short}`, "ai");
         setNotice("Слайд обновлён.");
       } catch (err) {
-        setNotice(err.message || "Запрос не выполнен.");
+        setNotice(err.message || "Слайд сейчас не обновился — попробуйте ещё раз.");
         if (err.status === 429 || err.data?.show_upsell) setUpsellOpen(true);
       } finally {
         setLocalAiBusy(false);
@@ -514,6 +879,55 @@ export default function PresentationView({ id, publicView = false }) {
     [publicView, slides, currentSlide, persistDeckPatch],
   );
 
+  const flushEditedSlideVersion = useCallback(
+    async (slideIdx) => {
+      if (publicView) return;
+      if (slideIdx < 0 || slideIdx >= slides.length) return;
+      clearTimeout(inlineEditTimeoutRef.current);
+      const slide = slides[slideIdx];
+      const sid = slide?.[SLIDE_SID_KEY];
+      if (!sid || !slide || typeof slide !== "object") return;
+      const chain = slideHistoriesMap[sid] || [];
+      const latest = chain[chain.length - 1]?.slide;
+      const currentJson = JSON.stringify(slide);
+      const latestJson = latest ? JSON.stringify(latest) : "";
+      if (currentJson === latestJson) {
+        await persistDeckPatch({ slides }, "");
+        return;
+      }
+      const nextHist = {
+        ...slideHistoriesMap,
+        [sid]: [
+          ...chain,
+          {
+            at: new Date().toISOString(),
+            source: "user",
+            summary: "Ручные правки",
+            slide: cloneSlideSnapshot(slide),
+          },
+        ],
+      };
+      await persistDeckPatch({ slides, slide_histories: nextHist }, "");
+    },
+    [publicView, slides, slideHistoriesMap, persistDeckPatch],
+  );
+
+  const selectSlideAt = useCallback(
+    async (index) => {
+      if (typeof index !== "number" || Number.isNaN(index)) return;
+      if (index < 0 || index >= slides.length) return;
+      if (index >= unlockedSlideCount) {
+        setUpsellOpen(true);
+        return;
+      }
+      if (index !== currentSlide) {
+        await flushEditedSlideVersion(currentSlide);
+      }
+      setCurrentSlide(index);
+    },
+    [slides.length, unlockedSlideCount, currentSlide, flushEditedSlideVersion],
+  );
+
   const handleHistoryDuplicate = useCallback(
     (chronoIdx) => {
       const i = historySlideSafe;
@@ -534,10 +948,9 @@ export default function PresentationView({ id, publicView = false }) {
         },
       ];
       void persistDeckPatch({ slides: nextSlides, slide_histories: nextHist }, "Слайд добавлен в конец.");
-      setCurrentSlide(nextSlides.length - 1);
-      setEditorSidebarPanel(null);
+      setCurrentSlide(Math.min(nextSlides.length - 1, lastUnlockedSlideIndex));
     },
-    [slides, slideHistoriesMap, historySlideSafe, persistDeckPatch],
+    [slides, slideHistoriesMap, historySlideSafe, persistDeckPatch, lastUnlockedSlideIndex],
   );
 
   useEffect(() => {
@@ -549,17 +962,23 @@ export default function PresentationView({ id, publicView = false }) {
     setLocalAiMessages([]);
   }, [historySlideIndex]);
 
-  const moveSlide = useCallback((delta) => {
-    setCurrentSlide((value) => {
-      const next = value + delta;
-      if (next < 0) return slides.length - 1;
-      if (next >= slides.length) return 0;
-      return next;
-    });
-  }, [slides.length]);
+  const moveSlide = useCallback(
+    async (delta) => {
+      const maxIdx = lastUnlockedSlideIndex;
+      if (maxIdx < 0) return;
+      let next = currentSlide + delta;
+      if (next < 0) next = 0;
+      else if (next > maxIdx) next = maxIdx;
+      if (next !== currentSlide) {
+        await flushEditedSlideVersion(currentSlide);
+      }
+      setCurrentSlide(next);
+    },
+    [lastUnlockedSlideIndex, currentSlide, flushEditedSlideVersion],
+  );
 
   useEffect(() => {
-    if (slides.length <= 1) return undefined;
+    if (unlockedSlideCount <= 1) return undefined;
     function onKeyDown(event) {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       const target = event.target;
@@ -572,7 +991,7 @@ export default function PresentationView({ id, publicView = false }) {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [slides.length, moveSlide]);
+  }, [unlockedSlideCount, moveSlide]);
 
   const pdfExportLocked = useMemo(() => {
     if (!billingUsage || billingUsage.pdf_exports_limit == null) return false;
@@ -628,13 +1047,13 @@ export default function PresentationView({ id, publicView = false }) {
           if (raw) {
             const parsed = JSON.parse(raw);
             if (typeof parsed.themeId === "string") nextDisplayThemeId = parsed.themeId;
-            if (typeof parsed.fontScale === "number" && parsed.fontScale >= 0.5 && parsed.fontScale <= 1.5) {
-              nextFontScale = parsed.fontScale;
+            if (typeof parsed.fontScale === "number" && Number.isFinite(parsed.fontScale)) {
+              nextFontScale = clampFontScale(parsed.fontScale);
             }
             if (typeof parsed.pageNumberMode === "string") {
               nextPageNumberMode = normalizePageNumberMode(parsed.pageNumberMode);
             } else if (typeof parsed.showPageNumbers === "boolean") {
-              nextPageNumberMode = parsed.showPageNumbers ? PAGE_NUMBER_MODE_CORNER_TR : PAGE_NUMBER_MODE_NONE;
+              nextPageNumberMode = parsed.showPageNumbers ? PAGE_NUMBER_MODE_CORNER_BR : PAGE_NUMBER_MODE_NONE;
             }
             if (typeof parsed.watermarkMode === "string") {
               nextWatermarkMode = normalizeWatermarkMode(parsed.watermarkMode);
@@ -674,10 +1093,10 @@ export default function PresentationView({ id, publicView = false }) {
           setSessionExpired(false);
           if (status === 404 && !publicView) {
             setError(
-              "Презентация не найдена или нет доступа. Если вы уже входили в аккаунт, откройте страницу на том же адресе, что при входе: localhost и 127.0.0.1 для браузера — разные сайты, сессия не переносится.",
+              "Презентацию не нашли или нет доступа. Если вы уже входили, откройте тот же адрес, что и при входе — например, localhost и 127.0.0.1 для браузера считаются разными сайтами.",
             );
           } else {
-            setError(err.message || "Не удалось загрузить презентацию");
+            setError(err.message || "Презентация сейчас не загрузилась — попробуйте обновить страницу.");
           }
         }
       } finally {
@@ -694,7 +1113,7 @@ export default function PresentationView({ id, publicView = false }) {
         `${VIEWER_STORAGE_PREFIX}${id}`,
         JSON.stringify({
           themeId: displayThemeId,
-          fontScale,
+          fontScale: clampFontScale(fontScale),
           pageNumberMode,
           watermarkMode,
           customColors: displayThemeId === CUSTOM_THEME_ID ? customColorDraft : null,
@@ -781,11 +1200,11 @@ export default function PresentationView({ id, publicView = false }) {
       if (response.status === 403) {
         const data = await response.json().catch(() => ({}));
         if (data.show_upsell) setUpsellOpen(true);
-        setNotice(data.detail || "Экспорт недоступен на текущем плане");
+        setNotice(data.detail || "Экспорт на вашем тарифе пока недоступен.");
         return;
       }
       if (!response.ok) {
-        setNotice("Не удалось подготовить файл");
+        setNotice("Файл не получилось подготовить — попробуйте ещё раз чуть позже.");
         return;
       }
 
@@ -798,7 +1217,7 @@ export default function PresentationView({ id, publicView = false }) {
       window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
       if (format === "pdf") void refreshExportUsage();
     } catch {
-      setNotice("Не удалось скачать файл. Попробуйте еще раз.");
+      setNotice("Скачивание прервалось — проверьте сеть и попробуйте снова.");
     }
   }
 
@@ -816,7 +1235,7 @@ export default function PresentationView({ id, publicView = false }) {
       setNotice("Публичная ссылка скопирована");
     } catch (err) {
       if (err.data?.show_upsell) setUpsellOpen(true);
-      setNotice(err.message || "Не удалось включить публичный доступ");
+      setNotice(err.message || "Публичная ссылка сейчас не включилась — попробуйте позже.");
     }
   }
 
@@ -877,7 +1296,7 @@ export default function PresentationView({ id, publicView = false }) {
       setPresentation(data);
       setTitleEditing(false);
     } catch (err) {
-      setNotice(err.message || "Не удалось сохранить название");
+      setNotice(err.message || "Название не сохранилось — попробуйте ещё раз.");
     }
   }
 
@@ -905,13 +1324,13 @@ export default function PresentationView({ id, publicView = false }) {
 
   if (error || !presentation) {
     const loadProblemMessage = sessionExpired
-      ? "Сессия истекла или сохранённые данные входа больше не действуют. Войдите снова, чтобы открыть презентацию."
-      : error || "Презентация не найдена";
+      ? "Сессия устарела — войдите ещё раз, и презентация откроется."
+      : error || "Такой презентации у нас нет или ссылка устарела.";
     return (
       <div className="su-page editor-dark" style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--ink)" }}>
         <AppHeader user={user} active="library" onLibrary={() => navigate(publicView ? "/" : "/dashboard")} onLogout={() => { logout(); navigate("/"); }} />
         <main style={{ maxWidth: 1180, margin: "0 auto", padding: "48px max(24px, 5vw)", textAlign: "center" }}>
-          <p style={{ color: sessionExpired ? "var(--ink-2)" : "#f87171", marginBottom: 18 }}>{loadProblemMessage}</p>
+          <p className="su-user-hint" style={{ margin: "0 auto 18px", maxWidth: 520, textAlign: "center" }}>{loadProblemMessage}</p>
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             {sessionExpired ? (
               <button type="button" className="su-btn su-btn-accent" onClick={() => setAuthOpen(true)}>
@@ -947,105 +1366,164 @@ export default function PresentationView({ id, publicView = false }) {
     >
       <AppHeader user={user} active="library" onLibrary={() => navigate(publicView ? "/" : "/dashboard")} onLogout={() => { logout(); navigate("/"); }} />
 
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "stretch",
+          overflow: "hidden",
+        }}
+      >
       <main
         className="viewer-layout"
         style={{
           flex: 1,
           minHeight: 0,
+          minWidth: 0,
           display: "flex",
           flexDirection: "column",
           width: "100%",
           overflow: "hidden",
-          padding: "20px 24px 20px",
-          paddingRight: 24 + EDITOR_DOCK_WIDTH + (editorSidebarPanel && !sidebarOverlay ? sidebarPanelWidth : 0),
-          transition: "padding-right 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
+          padding: "18px 20px 20px",
+          gap: 14,
         }}
       >
         <section style={{ minWidth: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           {/* ── Title row ── */}
           <div style={{ marginBottom: 12, flexShrink: 0, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", minWidth: 0, gap: 6 }}>
-              {titleEditing ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", minWidth: 0, gap: 10, flexWrap: "wrap" }}>
+              {publicView ? (
+                <h1
+                  title={(presentation.title || "").trim() || "Без названия"}
+                  aria-label={(presentation.title || "").trim() || "Без названия"}
+                  style={{
+                    margin: 0,
+                    padding: 0,
+                    fontFamily: "var(--font-display)",
+                    fontSize: "clamp(22px, 2.65vw, 30px)",
+                    lineHeight: 1.1,
+                    letterSpacing: "-0.035em",
+                    fontWeight: 750,
+                    wordBreak: "break-word",
+                    outline: "none",
+                    flexShrink: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {truncatePresentationTitleDisplay(presentation.title)}
+                </h1>
+              ) : (
                 <div
                   style={{
                     flex: 1,
                     minWidth: 0,
-                    borderLeft: "3px solid var(--accent)",
-                    paddingLeft: 12,
-                    paddingTop: 2,
-                    paddingBottom: 4,
-                    borderRadius: "0 8px 8px 0",
-                    background: "color-mix(in srgb, var(--accent) 7%, transparent)",
+                    display: "flex",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 10,
                   }}
                 >
-                  <input
-                    type="text"
-                    autoFocus
-                    value={titleDraft}
-                    onChange={(e) => setTitleDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") { e.preventDefault(); void commitTitleDraft(); }
-                      if (e.key === "Escape") { e.preventDefault(); titleEditDismissRef.current = true; cancelTitleEdit(); }
-                    }}
-                    onBlur={handleTitleBlur}
-                    aria-label="Название презентации"
+                  <div
                     style={{
-                      display: "block",
-                      width: "100%",
-                      margin: 0,
-                      padding: 0,
-                      border: "none",
-                      outline: "none",
-                      boxShadow: "none",
-                      background: "transparent",
-                      WebkitAppearance: "none",
-                      appearance: "none",
-                      fontFamily: "var(--font-display)",
-                      fontSize: "clamp(22px, 2.65vw, 30px)",
-                      fontWeight: 750,
-                      letterSpacing: "-0.035em",
-                      lineHeight: 1.1,
-                      color: "var(--ink)",
-                      borderRadius: 0,
-                      caretColor: "var(--accent)",
-                      textDecorationLine: "underline",
-                      textDecorationStyle: "dashed",
-                      textDecorationThickness: "from-font",
-                      textUnderlineOffset: "0.2em",
-                      textDecorationColor: "color-mix(in srgb, var(--accent) 55%, transparent)",
-                    }}
-                  />
-                </div>
-              ) : (
-                <>
-                  <h1
-                    role={publicView ? undefined : "button"}
-                    tabIndex={publicView ? undefined : 0}
-                    aria-label={publicView ? undefined : "Редактировать название"}
-                    onClick={publicView ? undefined : beginTitleEdit}
-                    onKeyDown={
-                      publicView
-                        ? undefined
-                        : (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); beginTitleEdit(); } }
-                    }
-                    style={{
-                      margin: 0,
-                      padding: 0,
-                      fontFamily: "var(--font-display)",
-                      fontSize: "clamp(22px, 2.65vw, 30px)",
-                      lineHeight: 1.1,
-                      letterSpacing: "-0.035em",
-                      fontWeight: 750,
-                      wordBreak: "break-word",
-                      cursor: publicView ? undefined : "pointer",
-                      outline: "none",
-                      flexShrink: 1,
+                      flex: 1,
                       minWidth: 0,
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: PRESENTATION_TITLE_RAIL_GAP_PX,
+                      borderRadius: "0 8px 8px 0",
+                      background: titleEditing
+                        ? "color-mix(in srgb, var(--accent) 7%, transparent)"
+                        : "transparent",
+                      transition: "background-color 0.2s ease",
+                      boxSizing: "border-box",
                     }}
                   >
-                    {presentation.title || "Без названия"}
-                  </h1>
-                  {!publicView ? (
+                    <div
+                      aria-hidden
+                      style={{
+                        width: PRESENTATION_TITLE_RAIL_BAR_PX,
+                        flexShrink: 0,
+                        alignSelf: "stretch",
+                        minHeight: 26,
+                        borderRadius: 2,
+                        background: titleEditing ? "var(--accent)" : "transparent",
+                        transition: "background-color 0.2s ease",
+                      }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {titleEditing ? (
+                        <input
+                          type="text"
+                          autoFocus
+                          value={titleDraft}
+                          onChange={(e) => setTitleDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); void commitTitleDraft(); }
+                            if (e.key === "Escape") { e.preventDefault(); titleEditDismissRef.current = true; cancelTitleEdit(); }
+                          }}
+                          onBlur={handleTitleBlur}
+                          aria-label="Название презентации"
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            margin: 0,
+                            padding: 0,
+                            border: "none",
+                            outline: "none",
+                            boxShadow: "none",
+                            background: "transparent",
+                            WebkitAppearance: "none",
+                            appearance: "none",
+                            fontFamily: "var(--font-display)",
+                            fontSize: "clamp(22px, 2.65vw, 30px)",
+                            fontWeight: 750,
+                            letterSpacing: "-0.035em",
+                            lineHeight: 1.1,
+                            color: "var(--ink)",
+                            borderRadius: 0,
+                            caretColor: "var(--accent)",
+                            textDecorationLine: "underline",
+                            textDecorationStyle: "dashed",
+                            textDecorationThickness: "from-font",
+                            textUnderlineOffset: "0.2em",
+                            textDecorationColor: "color-mix(in srgb, var(--accent) 55%, transparent)",
+                          }}
+                        />
+                      ) : (
+                        <h1
+                          role="button"
+                          tabIndex={0}
+                          title={(presentation.title || "").trim() || "Без названия"}
+                          aria-label={`Редактировать название: ${(presentation.title || "").trim() || "Без названия"}`}
+                          onClick={beginTitleEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); beginTitleEdit(); }
+                          }}
+                          style={{
+                            margin: 0,
+                            padding: 0,
+                            fontFamily: "var(--font-display)",
+                            fontSize: "clamp(22px, 2.65vw, 30px)",
+                            lineHeight: 1.1,
+                            letterSpacing: "-0.035em",
+                            fontWeight: 750,
+                            wordBreak: "break-word",
+                            cursor: "pointer",
+                            outline: "none",
+                            flexShrink: 1,
+                            minWidth: 0,
+                          }}
+                        >
+                          {truncatePresentationTitleDisplay(presentation.title)}
+                        </h1>
+                      )}
+                    </div>
+                  </div>
+                  {!titleEditing ? (
                     <button
                       type="button"
                       onClick={beginTitleEdit}
@@ -1069,10 +1547,145 @@ export default function PresentationView({ id, publicView = false }) {
                       <Icon name="edit" size={13} stroke={1.75} />
                     </button>
                   ) : null}
-                </>
+                </div>
               )}
+              <div
+                style={{
+                  marginLeft: "auto",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  gap: 6,
+                  flexWrap: "wrap",
+                }}
+              >
+                {!publicView ? (
+                  <button
+                    type="button"
+                    className="su-btn su-btn-outline"
+                    title={"Настроить стиль презентации"}
+                    onClick={() => setDesignModalOpen(true)}
+                    style={{ padding: "8px 10px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}
+                  >
+                    <Icon name="palette" size={15} stroke={2} />
+                    {"Стиль"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="su-btn su-btn-outline"
+                  title={"Демонстрация"}
+                  onClick={toggleFullscreen}
+                  style={{ padding: "8px 10px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  <Icon name="play" size={15} stroke={2} />
+                  {"Демо"}
+                </button>
+                <div
+                  onBlur={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget)) setExportMenuOpen(false);
+                  }}
+                  style={{ position: "relative", flexShrink: 0 }}
+                >
+                  <button
+                    type="button"
+                    className="su-btn su-btn-outline"
+                    title={"Скачать презентацию"}
+                    aria-haspopup="menu"
+                    aria-expanded={exportMenuOpen}
+                    onClick={() => setExportMenuOpen((v) => !v)}
+                    style={{ padding: "8px 10px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}
+                  >
+                    <Icon name="download" size={15} stroke={2} />
+                    {"Скачать"}
+                    <Icon name="chevron-down" size={14} stroke={2} />
+                  </button>
+                  {exportMenuOpen ? (
+                    <div
+                      role="menu"
+                      style={{
+                        position: "absolute",
+                        top: "calc(100% + 6px)",
+                        right: 0,
+                        zIndex: 40,
+                        minWidth: 142,
+                        padding: 6,
+                        borderRadius: 12,
+                        border: "1px solid var(--line)",
+                        background: "rgba(255,255,255,.98)",
+                        boxShadow: "0 12px 32px rgba(32,33,36,.14)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                      }}
+                    >
+                      {[
+                        { format: "pptx", label: "PPTX", icon: "download" },
+                        { format: "pdf", label: "PDF", icon: pdfExportLocked ? "lock" : "download", locked: pdfExportLocked },
+                        { format: "html", label: "HTML", icon: "code" },
+                      ].map((item) => (
+                        <button
+                          key={item.format}
+                          type="button"
+                          role="menuitem"
+                          title={item.locked ? "PDF доступен на более высоком тарифе" : `Скачать ${item.label}`}
+                          onClick={() => {
+                            setExportMenuOpen(false);
+                            if (item.locked) {
+                              setUpsellOpen(true);
+                              return;
+                            }
+                            download(item.format);
+                          }}
+                          style={{
+                            width: "100%",
+                            padding: "8px 10px",
+                            borderRadius: 8,
+                            border: "none",
+                            background: "transparent",
+                            color: item.locked ? "var(--ink-4)" : "var(--ink-2)",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            fontSize: 12,
+                            fontWeight: 650,
+                            textAlign: "left",
+                          }}
+                        >
+                          <Icon name={item.icon} size={15} stroke={2} />
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                {!publicView ? (
+                  <button
+                    type="button"
+                    className="su-btn su-btn-accent"
+                    title={"Поделиться ссылкой"}
+                    onClick={sharePresentation}
+                    style={{ padding: "8px 10px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}
+                  >
+                    <Icon name="share" size={15} stroke={2} />
+                    {"Поделиться"}
+                  </button>
+                ) : null}
+              </div>
             </div>
-            <div style={{ marginTop: 5, display: "flex", gap: 10, alignItems: "center", color: "var(--ink-3)", fontSize: 12 }}>
+            <div
+              style={{
+                marginTop: 6,
+                paddingLeft: publicView ? 0 : PRESENTATION_TITLE_RAIL_SLOT_PX,
+                display: "flex",
+                gap: 10,
+                alignItems: "center",
+                color: "var(--ink-3)",
+                fontSize: 12,
+                flexWrap: "wrap",
+              }}
+            >
               <span>
                 {slides.length} {slides.length === 1 ? "слайд" : slides.length >= 2 && slides.length <= 4 ? "слайда" : "слайдов"}
               </span>
@@ -1087,47 +1700,73 @@ export default function PresentationView({ id, publicView = false }) {
                 marginBottom: 14,
                 flexShrink: 0,
                 padding: "10px 14px",
-                borderRadius: "var(--r-md)",
+                borderRadius: 12,
                 border: "1px solid var(--line)",
-                background: "var(--surface)",
+                background: "rgba(255,255,255,.74)",
                 color: "var(--ink-2)",
                 fontSize: 13,
                 lineHeight: 1.45,
+                backdropFilter: "blur(10px)",
               }}
             >
               {notice}{shareUrl ? `: ${shareUrl}` : ""}
             </div>
           ) : null}
 
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              minWidth: 0,
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "stretch",
+              gap: 16,
+            }}
+          >
           {/* ── Slide canvas card ── */}
+          <SlideFilmstripSidebar
+            slides={slides}
+            currentSlide={currentSlide}
+            onSlideSelect={selectSlideAt}
+            unlockedSlideCount={unlockedSlideCount}
+            preset={basePreset}
+            accent={basePreset.accent}
+            fontScale={fontScale}
+            pageNumberMode={pageNumberMode}
+            watermarkMode={watermarkMode}
+            slideWidth={slideDims?.w}
+            slideHeight={slideDims?.h}
+            moveSlide={moveSlide}
+            leadingInsetPx={publicView ? 8 : PRESENTATION_TITLE_RAIL_SLOT_PX}
+          />
           <div
             ref={canvasRef}
             style={{
               flex: 1,
               minHeight: 0,
+              minWidth: 0,
               display: "flex",
               flexDirection: "column",
-              background: "var(--surface-2)",
-              border: "1px solid var(--line)",
-              borderRadius: 14,
-              padding: 10,
-              boxShadow: "0 4px 24px rgba(37,99,235,.09), 0 1px 4px rgba(15,31,58,.06)",
+              background: "transparent",
+              border: "none",
+              borderRadius: 0,
+              padding: 0,
+              boxShadow: "none",
             }}
           >
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1, minHeight: 0, width: "100%" }}>
-              {/* main slide */}
-              <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex", alignItems: "stretch", gap: 8 }}>
-                <SlideVersionsColumn
-                  versionsChrono={currentSlideVersionsChrono}
-                  slideIndex={currentSlide}
-                  slidesLen={slides.length}
-                  preset={basePreset}
-                  onActivate={handleRestoreCurrentSlide}
-                  onSendAi={handleRepromptCurrentSlide}
-                  localAiBusy={localAiBusy}
-                  busy={persistBusy}
-                  publicView={publicView}
-                />
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "stretch",
+                  gap: 0,
+                }}
+              >
                 <div
                   ref={setSlideAreaEl}
                   style={{
@@ -1138,6 +1777,7 @@ export default function PresentationView({ id, publicView = false }) {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    background: "transparent",
                   }}
                 >
                   {slideDims && (
@@ -1155,149 +1795,177 @@ export default function PresentationView({ id, publicView = false }) {
                     />
                   )}
                 </div>
-              </div>
-
-              {/* thumbnails + nav */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, flexShrink: 0 }}>
-                <div
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    display: "flex",
-                    flexWrap: "nowrap",
-                    alignItems: "stretch",
-                    gap: 7,
-                    overflowX: "auto",
-                    overflowY: "hidden",
-                    overscrollBehaviorY: "none",
-                    padding: "3px 2px 4px",
-                    WebkitOverflowScrolling: "touch",
-                  }}
-                >
-                  {slides.map((slide, index) => {
-                    const active = currentSlide === index;
-                    return (
-                      <div
-                        key={`${getSlideTitle(slide, index)}-${index}`}
-                        style={{
-                          flex: "0 0 auto",
-                          width: 80,
-                          position: "relative",
-                        }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setCurrentSlide(index)}
-                          style={{
-                            width: "100%",
-                            textAlign: "left",
-                            border: "1px solid var(--line)",
-                            background: active ? "var(--surface)" : "rgba(255,255,255,.55)",
-                            borderRadius: 6,
-                            padding: 3,
-                            color: "var(--ink)",
-                            boxShadow: active ? `0 0 0 2px ${basePreset.accent}` : "none",
-                            transition: "box-shadow 0.15s",
-                            outline: "none",
-                          }}
-                        >
-                          <SlideThumbnail slide={slide} index={index} total={slides.length} preset={basePreset} />
-                          <div style={{ marginTop: 3, display: "flex", gap: 3, alignItems: "baseline", fontSize: 9, minWidth: 0, paddingLeft: 1 }}>
-                            <span style={{ color: active ? basePreset.accent : "var(--ink-4)", fontFamily: "var(--font-mono)", flexShrink: 0, fontWeight: 700 }}>
-                              {String(index + 1).padStart(2, "0")}
-                            </span>
-                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-3)" }}>
-                              {getSlideTitle(slide, index)}
-                            </span>
-                          </div>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                  <CanvasButton label="Назад" icon="arrow-left" onClick={() => moveSlide(-1)} />
-                  <CanvasButton label="Вперед" icon="arrow-right" onClick={() => moveSlide(1)} />
-                </div>
+                <SlideVersionsColumn
+                  variant="below"
+                  versionsChrono={currentSlideVersionsChrono}
+                  slideIndex={currentSlide}
+                  slidesLen={slides.length}
+                  preset={basePreset}
+                  onActivate={handleRestoreCurrentSlide}
+                  onSendAi={handleRepromptCurrentSlide}
+                  localAiBusy={localAiBusy}
+                  busy={persistBusy}
+                  publicView={publicView}
+                />
               </div>
             </div>
           </div>
+          {!publicView ? (
+            <aside
+              aria-label="Работа с ИИ"
+              style={{
+                width: "min(380px, 28vw)",
+                minWidth: 320,
+                maxWidth: 420,
+                flexShrink: 0,
+                minHeight: 0,
+                alignSelf: "stretch",
+                display: "flex",
+                flexDirection: "column",
+                padding: 0,
+                boxSizing: "border-box",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                <DeckAiComposer
+                  presentationTitle={presentation?.title || ""}
+                  presentationId={id}
+                  publicView={publicView}
+                  busy={deckAiBusy}
+                  onBusyChange={setDeckAiBusy}
+                  onApplyDeckAssist={handleApplyDeckAssist}
+                  onAuthRequest={() => setAuthOpen(true)}
+                />
+              </div>
+            </aside>
+          ) : null}
+
+          </div>
         </section>
       </main>
+      </div>
 
-      <EditorRightSidebar
-        activePanel={editorSidebarPanel}
-        onActivePanelChange={setEditorSidebarPanel}
-        activePresetId={effectiveThemeId}
-        onPresetSelect={handleViewerThemeSelect}
-        userPlan={userPlan}
-        customPresetActive={effectiveThemeId === CUSTOM_THEME_ID}
-        customPresetPreview={basePreset}
-        canPersistCustom={!publicView && canUseCustomTheme(userPlan)}
-        onCustomColorChange={(key, hex) => {
-          setCustomColorDraft((prev) => ({
-            ...(presentation?.theme_custom || {}),
-            ...(prev || {}),
-            [key]: hex,
-          }));
-        }}
-        onSaveCustomTheme={() => void saveCustomThemeToDeck()}
-        onApplySavedScheme={(scheme) => {
-          setCustomColorDraft({ bg: scheme.bg, ink: scheme.ink, accent: scheme.accent });
-        }}
-        presentationId={id}
-        themeSaveBusy={themeSaveBusy}
-        publicView={publicView}
-        pdfLocked={pdfExportLocked}
-        onDownload={(format) => download(format)}
-        onPdfLocked={() => setUpsellOpen(true)}
-        onShare={sharePresentation}
-        onDemo={toggleFullscreen}
-        hasOverrides={Boolean(
-          (displayThemeId !== "" && normalizeLegacyThemeId(displayThemeId) !== normalizedDeckTheme) ||
-            (Boolean(customColorDraft) && effectiveThemeId === CUSTOM_THEME_ID) ||
-            fontScale !== 1 ||
-            pageNumberMode !== DEFAULT_PAGE_NUMBER_MODE ||
-            watermarkMode !== DEFAULT_WATERMARK_MODE,
-        )}
-        fontScale={fontScale}
-        onFontScaleChange={setFontScale}
-        pageNumberMode={pageNumberMode}
-        onPageNumberModeChange={setPageNumberMode}
-        watermarkMode={watermarkMode}
-        onWatermarkModeChange={setWatermarkMode}
-        onReset={resetAppearanceToTheme}
-        onLockedPreset={() => setUpsellOpen(true)}
-        presentationTitle={presentation?.title || ""}
-        historySlideIndex={historySlideSafe}
-        onHistorySlideIndexChange={setHistorySlideIndex}
-        historyVersions={historyVersions}
-        historyCurrentSlide={slides[historySlideSafe] || null}
-        historyPreviewChrono={historyPreviewChrono}
-        onHistoryPreviewChange={(chrono) => {
-          if (chrono != null) setCurrentSlide(historySlideSafe);
-          setHistoryPreviewChrono(chrono);
-        }}
-        historyCompareChrono={historyCompareChrono}
-        onHistoryCompareChange={setHistoryCompareChrono}
-        onHistoryRestore={handleHistoryRestore}
-        onHistoryDuplicate={handleHistoryDuplicate}
-        localAiOpen={localAiOpen}
-        onLocalAiOpenChange={setLocalAiOpen}
-        localAiMessages={localAiMessages}
-        onLocalAiMessagesChange={setLocalAiMessages}
-        onSendLocalSlideAi={handleSendLocalSlideAi}
-        localAiBusy={localAiBusy}
-        persistBusy={persistBusy}
-        deckAiBusy={deckAiBusy}
-        onDeckAssist={handleApplyDeckAssist}
-        onDeckAiBusyChange={setDeckAiBusy}
-        onAuthRequest={() => setAuthOpen(true)}
-        slidesLength={slides.length}
-        overlayMode={sidebarOverlay}
-        panelWidth={sidebarPanelWidth}
-      />
+      {designModalOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={"Настройки стиля"}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setDesignModalOpen(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 80,
+            display: "grid",
+            placeItems: "center",
+            padding: 24,
+            background: "rgba(32,33,36,.18)",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          <div
+            style={{
+              width: "min(720px, calc(100vw - 48px))",
+              maxHeight: "min(760px, calc(100vh - 48px))",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              borderRadius: 16,
+              border: "1px solid var(--line)",
+              background: "rgba(255,255,255,.96)",
+              boxShadow: "0 18px 54px rgba(32,33,36,.18)",
+            }}
+          >
+            <div
+              style={{
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "14px 16px",
+                borderBottom: "1px solid var(--line)",
+              }}
+            >
+              <h2 style={{ flex: 1, margin: 0, fontSize: 15, fontWeight: 750, lineHeight: 1.2 }}>
+                {"Стиль презентации"}
+              </h2>
+              {appearanceHasOverrides ? (
+                <button
+                  type="button"
+                  onClick={resetAppearanceToTheme}
+                  className="su-btn su-btn-outline"
+                  style={{ padding: "7px 10px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  <Icon name="rotate-ccw" size={14} stroke={2} />
+                  {"Сбросить"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                aria-label={"Закрыть"}
+                onClick={() => setDesignModalOpen(false)}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 999,
+                  border: "1px solid var(--line)",
+                  background: "rgba(255,255,255,.88)",
+                  cursor: "pointer",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "var(--ink-3)",
+                  flexShrink: 0,
+                }}
+              >
+                <Icon name="x" size={17} stroke={2} />
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 18px 20px" }}>
+              <EditorDesignPanel
+                activePresetId={effectiveThemeId}
+                onPresetSelect={handleViewerThemeSelect}
+                userPlan={userPlan}
+                customPresetActive={effectiveThemeId === CUSTOM_THEME_ID}
+                customPresetPreview={basePreset}
+                canPersistCustom={!publicView && canUseCustomTheme(userPlan)}
+                onCustomColorChange={(key, hex) => {
+                  setCustomColorDraft((prev) => ({
+                    ...(presentation?.theme_custom || {}),
+                    ...(prev || {}),
+                    [key]: hex,
+                  }));
+                }}
+                onSaveCustomTheme={() => void saveCustomThemeToDeck()}
+                onApplySavedScheme={(scheme) => {
+                  setCustomColorDraft({ bg: scheme.bg, ink: scheme.ink, accent: scheme.accent });
+                }}
+                presentationId={id}
+                themeSaveBusy={themeSaveBusy}
+                onLockedPreset={() => setUpsellOpen(true)}
+                publicView={publicView}
+                fontScale={fontScale}
+                onFontScaleChange={(v) => setFontScale(clampFontScale(v))}
+                pageNumberMode={pageNumberMode}
+                onPageNumberModeChange={setPageNumberMode}
+                watermarkMode={watermarkMode}
+                onWatermarkModeChange={setWatermarkMode}
+                onReset={resetAppearanceToTheme}
+                hasOverrides={appearanceHasOverrides}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSuccess={handleAuthSuccess} />
       <UpsellModal open={upsellOpen} onClose={() => setUpsellOpen(false)} />
@@ -1586,20 +2254,23 @@ function RailWatermarkPicker({ value, onChange, userPlan, onLocked, publicView }
   );
 }
 
-const EDITOR_DOCK_WIDTH = 68;
-const EDITOR_PANEL_WIDTH = 340;
+const EDITOR_DOCK_WIDTH = 84;
+const EDITOR_PANEL_WIDTH = 360;
 
 function SidebarPanelHeader({ title, onClose, extra }) {
   return (
     <div
       style={{
+        width: "100%",
+        minWidth: 0,
+        boxSizing: "border-box",
         flexShrink: 0,
         display: "flex",
         alignItems: "center",
         gap: 10,
-        padding: "12px 14px",
+        padding: "14px 16px",
         borderBottom: "1px solid var(--line)",
-        background: "color-mix(in srgb, var(--surface) 88%, var(--surface-2))",
+        background: "rgba(255,255,255,.82)",
       }}
     >
       <h2
@@ -1623,9 +2294,9 @@ function SidebarPanelHeader({ title, onClose, extra }) {
         style={{
           width: 34,
           height: 34,
-          borderRadius: 10,
+          borderRadius: 999,
           border: "1px solid var(--line)",
-          background: "var(--surface)",
+          background: "rgba(255,255,255,.88)",
           cursor: "pointer",
           display: "grid",
           placeItems: "center",
@@ -1981,16 +2652,16 @@ function EditorDesignPanel({
           Содержимое слайда
         </label>
         <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--accent)", fontWeight: 700 }}>
-          {Math.round(fontScale * 100)}%
+          {Math.round(clampFontScale(fontScale) * 100)}%
         </span>
       </div>
       <input
         type="range"
-        min={50}
-        max={150}
+        min={70}
+        max={130}
         step={1}
-        value={Math.round(fontScale * 100)}
-        onChange={(e) => onFontScaleChange(Number(e.target.value) / 100)}
+        value={Math.round(clampFontScale(fontScale) * 100)}
+        onChange={(e) => onFontScaleChange(clampFontScale(Number(e.target.value) / 100))}
         style={{ width: "100%", marginBottom: 12, accentColor: "var(--accent)" }}
       />
 
@@ -2013,32 +2684,326 @@ function EditorDesignPanel({
   );
 }
 
-const AI_QUICK_ACTIONS = [
-  { id: "structure", label: "Улучшить структуру и логику всей презентации" },
-  { id: "style", label: "Привести формулировки к единому уверенному тону" },
-  { id: "shorten", label: "Сократить текст на всех слайдах, сохранив смысл" },
-  { id: "hierarchy", label: "Сделать заголовки короче и заметнее" },
-  { id: "logic", label: "Убрать повторы между слайдами" },
+const DECK_AI_PROMPTS = [
+  {
+    id: "new-slide",
+    label: "Новый слайд на тему ...",
+    prompt: "Добавь новый слайд на тему: . Сохрани общий стиль презентации, сделай понятный заголовок и 3-5 сильных тезисов.",
+  },
+  {
+    id: "fix-current",
+    label: "Исправь на этом слайде ...",
+    prompt: "Исправь текущий слайд: . Не меняй смысл презентации, улучши ясность, структуру и визуальную иерархию.",
+  },
+  {
+    id: "new-structure",
+    label: "Придумай новую структуру",
+    prompt: "Придумай новую структуру презентации: выстрой слайды логично, убери повторы, усили переходы между идеями и сохрани ключевой смысл.",
+  },
+  {
+    id: "rewrite",
+    label: "Переформулируй",
+    prompt: "Переформулируй текст презентации: сделай формулировки яснее, короче и увереннее, сохрани факты, тон и основную мысль.",
+  },
+  {
+    id: "redo",
+    label: "Просто переделай",
+    prompt: "Переделай презентацию целиком лучше: усили структуру, сократи слабые места, сделай заголовки точнее, а слайды более убедительными.",
+  },
 ];
 
-function EditorAiPanel({ presentationTitle, presentationId, publicView, busy, onBusyChange, onApplyDeckAssist, onAuthRequest }) {
+function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId: _presentationId, publicView, busy, onBusyChange, onApplyDeckAssist, onAuthRequest }) {
   const [prompt, setPrompt] = useState("");
-  const [messages, setMessages] = useState(() => [
-    {
-      role: "assistant",
-      text: "Здесь ИИ видит всю презентацию целиком. После применения у каждого слайда появится новая версия в разделе «История слайда». Для точечных правок откройте историю конкретного слайда.",
-    },
-  ]);
+  const [docFile, setDocFile] = useState(null);
+  const [speechListening, setSpeechListening] = useState(false);
+  const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const speechBaseRef = useRef("");
 
-  async function runInstruction(text) {
-    if (publicView) return;
-    const trimmed = text.trim();
-    if (!trimmed) return;
+  const speechSupported =
+    typeof window !== "undefined" &&
+    !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  useEffect(() => {
+    if (!speechSupported) return undefined;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return undefined;
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "ru-RU";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (event) => {
+      let chunk = "";
+      for (let i = 0; i < event.results.length; i++) {
+        chunk += event.results[i][0].transcript;
+      }
+      const spoken = chunk.trim();
+      const base = speechBaseRef.current.trimEnd();
+      const glue = base && spoken ? " " : "";
+      setPrompt(base + glue + spoken);
+    };
+    recognition.onerror = () => setSpeechListening(false);
+    recognition.onend = () => setSpeechListening(false);
+    recognitionRef.current = recognition;
+    return () => {
+      try {
+        recognition.stop();
+      } catch {
+        /* ignore */
+      }
+      recognitionRef.current = null;
+    };
+  }, [speechSupported]);
+
+  function toggleSpeechInput() {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    if (speechListening) {
+      recognition.stop();
+      return;
+    }
+    speechBaseRef.current = prompt;
+    try {
+      recognition.start();
+      setSpeechListening(true);
+    } catch {
+      setSpeechListening(false);
+    }
+  }
+
+  function applyPromptTemplate(template) {
+    setPrompt(template);
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(template.length, template.length);
+    });
+  }
+
+  async function submitPrompt() {
+    const trimmed = prompt.trim();
+    if (!trimmed || publicView) return;
     if (!getAccessToken()) {
       onAuthRequest();
       return;
     }
-    setMessages((m) => [...m, { role: "user", text: trimmed }]);
+
+    onBusyChange(true);
+    try {
+      await onApplyDeckAssist(trimmed);
+      setPrompt("");
+    } finally {
+      onBusyChange(false);
+    }
+  }
+
+  return (
+    <div
+      className="hero-composer"
+      style={{
+        margin: 0,
+        width: "100%",
+        maxWidth: "none",
+        padding: 12,
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+        boxShadow: "0 1px 2px rgba(32,33,36,.04), 0 8px 22px rgba(32,33,36,.06)",
+      }}
+    >
+      <div style={{ padding: "2px 2px 10px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <Icon name="sparkles" size={16} stroke={2} style={{ color: "var(--accent)" }} />
+          <div style={{ fontSize: 14, fontWeight: 750, color: "var(--ink)", letterSpacing: "-0.015em" }}>
+            Работа с ИИ
+          </div>
+        </div>
+        <div style={{ fontSize: 12, lineHeight: 1.35, color: "var(--ink-3)" }}>
+          Напишите, что поменять в презентации, или выберите быстрый сценарий.
+        </div>
+      </div>
+
+      <div
+        style={{
+          marginTop: "auto",
+          flexShrink: 0,
+          padding: 0,
+          border: "none",
+          borderRadius: 0,
+          background: "transparent",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 6,
+            overflow: "hidden",
+          }}
+        >
+          {DECK_AI_PROMPTS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              disabled={busy}
+              onClick={() => applyPromptTemplate(item.prompt)}
+              style={{
+                padding: "6px 9px",
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--line)",
+                background: "rgba(255,255,255,.72)",
+                fontSize: 11.5,
+                lineHeight: 1.2,
+                color: "var(--ink-2)",
+                cursor: busy ? "not-allowed" : "pointer",
+                opacity: busy ? 0.55 : 1,
+                flex: "1 1 calc(50% - 6px)",
+                minWidth: 0,
+                textAlign: "center",
+                whiteSpace: "normal",
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <textarea
+          ref={textareaRef}
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              void submitPrompt();
+            }
+          }}
+          placeholder="Напишите, что изменить в презентации..."
+          className="hero-textarea"
+          rows={7}
+          disabled={busy}
+          style={{
+            minHeight: 168,
+            padding: "12px 14px",
+            borderLeft: "2px solid color-mix(in srgb, var(--accent) 66%, var(--line))",
+            borderRadius: 0,
+            background: "color-mix(in srgb, var(--surface-2) 28%, var(--surface))",
+            fontSize: 14,
+            lineHeight: 1.45,
+          }}
+        />
+
+        {docFile ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--accent-soft)", borderRadius: "var(--r-md)", fontSize: 12 }}>
+            <Icon name="paperclip" size={13} style={{ color: "var(--accent)" }} />
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-2)" }}>{docFile.name}</span>
+            <button type="button" onClick={() => setDocFile(null)} style={{ color: "var(--ink-3)" }} aria-label="Убрать файл">
+              <Icon name="x" size={12} />
+            </button>
+          </div>
+        ) : null}
+
+        <div className="hero-controls" style={{ padding: "2px 0 0", gap: 10 }}>
+          <div className="hero-controls-start">
+            {busy ? (
+              <span aria-label="ИИ применяет изменения" style={{ display: "inline-flex", alignItems: "center", gap: 4, paddingInline: 6 }}>
+                <span className="su-ai-typing-dot" />
+                <span className="su-ai-typing-dot" />
+                <span className="su-ai-typing-dot" />
+              </span>
+            ) : null}
+            {speechSupported ? (
+              <button
+                type="button"
+                className="hero-mic-btn hero-icon-tooltip"
+                data-active={speechListening}
+                aria-label={speechListening ? "Остановить голосовой ввод" : "Голосовой ввод"}
+                aria-pressed={speechListening}
+                onClick={toggleSpeechInput}
+                disabled={busy}
+              >
+                <Icon name="mic" size={18} stroke={2} />
+                <span className="hero-icon-tooltip__bubble" role="tooltip">
+                  {speechListening ? "Стоп" : "Голос в текст"}
+                </span>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="hero-attach-btn hero-icon-tooltip"
+              aria-label="Вложить файл"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy}
+            >
+              <Icon name="paperclip" size={18} stroke={2} />
+              <span className="hero-icon-tooltip__bubble" role="tooltip">
+                PDF, Word, PPTX, фото
+              </span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={HERO_SOURCE_ACCEPT}
+              style={{ display: "none" }}
+              onChange={(event) => setDocFile(event.target.files?.[0] ?? null)}
+            />
+          </div>
+          <button
+            type="button"
+            className="su-btn su-btn-accent"
+            disabled={busy || !prompt.trim()}
+            onClick={() => void submitPrompt()}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 13,
+            }}
+          >
+            {busy ? "Применяем..." : "Отправить"}
+            <Icon name="arrow-right" size={15} stroke={2} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const AI_QUICK_ACTIONS = [
+  { id: "structure", label: "Логика и структура", prompt: "Улучши структуру и логику всей презентации" },
+  { id: "style", label: "Единый тон", prompt: "Приведи формулировки к единому уверенному тону на всех слайдах" },
+  { id: "shorten", label: "Короче текст", prompt: "Сократи текст на всех слайдах, сохранив смысл" },
+  { id: "hierarchy", label: "Короче заголовки", prompt: "Сделай заголовки короче и заметнее" },
+  { id: "logic", label: "Без повторов", prompt: "Убери повторы между слайдами" },
+];
+
+function EditorAiPanel({ presentationTitle: _presentationTitle, presentationId: _presentationId, publicView, busy, onBusyChange, onApplyDeckAssist, onAuthRequest }) {
+  const [prompt, setPrompt] = useState("");
+  const [messages, setMessages] = useState(() => [
+    {
+      role: "assistant",
+      text: "Напишите, что поменять во всей презентации — или выберите подсказку ниже.",
+    },
+  ]);
+
+  async function runInstruction(apiText, displayText = null) {
+    if (publicView) return;
+    const trimmed = apiText.trim();
+    if (!trimmed) return;
+    const shown = (displayText ?? apiText).trim() || trimmed;
+    if (!getAccessToken()) {
+      onAuthRequest();
+      return;
+    }
+    setMessages((m) => [...m, { role: "user", text: shown }]);
     onBusyChange(true);
     try {
       await onApplyDeckAssist(trimmed);
@@ -2046,11 +3011,11 @@ function EditorAiPanel({ presentationTitle, presentationId, publicView, busy, on
         ...m,
         {
           role: "assistant",
-          text: "Изменения применены ко всем слайдам. Проверьте результат на холсте и в истории версий.",
+          text: "Готово — проверьте слайды на холсте.",
         },
       ]);
     } catch (err) {
-      setMessages((m) => [...m, { role: "assistant", text: err.message || "Запрос не выполнен." }]);
+      setMessages((m) => [...m, { role: "assistant", text: err.message || "Сейчас не получилось ответить — загляните чуть позже или попробуйте короче." }]);
     } finally {
       onBusyChange(false);
     }
@@ -2064,74 +3029,41 @@ function EditorAiPanel({ presentationTitle, presentationId, publicView, busy, on
   }
 
   return (
-    <>
-      <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--ink-3)", lineHeight: 1.45 }}>
-        Презентация «{presentationTitle || "без названия"}» — правки по всему файлу сразу (без смены числа слайдов).
-      </p>
-
-      <RailSectionLabel>Диалог</RailSectionLabel>
-      <div
-        style={{
-          borderRadius: 12,
-          border: "1px solid var(--line)",
-          background: "color-mix(in srgb, var(--surface-2) 55%, var(--surface))",
-          padding: 10,
-          maxHeight: 200,
-          overflowY: "auto",
-          marginBottom: 14,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
-        {messages.map((msg, i) => (
-          <div
-            key={`${msg.role}-${i}`}
-            style={{
-              alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-              maxWidth: "92%",
-              padding: "8px 11px",
-              borderRadius: 10,
-              fontSize: 12.5,
-              lineHeight: 1.4,
-              background: msg.role === "user" ? "color-mix(in srgb, var(--accent) 14%, transparent)" : "var(--surface)",
-              border: msg.role === "user" ? "1px solid color-mix(in srgb, var(--accent) 22%, transparent)" : "1px solid var(--line)",
-              color: "var(--ink-2)",
-            }}
-          >
-            {msg.text}
-          </div>
-        ))}
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        width: "100%",
+        boxSizing: "border-box",
+        gap: 12,
+      }}
+    >
+      <div style={{ flexShrink: 0, fontSize: 12, lineHeight: 1.45, color: "var(--ink-3)" }}>
+        Напишите, что поменять во всей презентации, или выберите быструю подсказку.
       </div>
 
-      <RailSectionLabel>Быстрые действия</RailSectionLabel>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, flexShrink: 0, minWidth: 0, width: "100%" }}>
         {AI_QUICK_ACTIONS.map((a) => (
           <button
             key={a.id}
             type="button"
             disabled={busy}
-            onClick={() => void runInstruction(a.label)}
+            onClick={() => void runInstruction(a.prompt, a.label)}
             style={{
-              textAlign: "left",
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid var(--line)",
+              padding: "6px 10px",
+              borderRadius: 999,
+              border: "1px solid var(--line-2)",
               background: "var(--surface)",
-              fontSize: 12.5,
+              fontSize: 12,
               color: "var(--ink-2)",
               cursor: busy ? "not-allowed" : "pointer",
-              opacity: busy ? 0.65 : 1,
-              transition: "border-color 0.15s, box-shadow 0.15s",
-            }}
-            onMouseEnter={(e) => {
-              if (busy) return;
-              e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 28%, var(--line))";
-              e.currentTarget.style.boxShadow = "0 2px 10px rgba(37,99,235,.08)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = "var(--line)";
-              e.currentTarget.style.boxShadow = "none";
+              opacity: busy ? 0.55 : 1,
+              maxWidth: "100%",
+              whiteSpace: "normal",
+              overflowWrap: "anywhere",
             }}
           >
             {a.label}
@@ -2139,50 +3071,109 @@ function EditorAiPanel({ presentationTitle, presentationId, publicView, busy, on
         ))}
       </div>
 
-      <RailSectionLabel>Свой запрос</RailSectionLabel>
-      <textarea
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder="Опишите, что изменить по всей презентации…"
-        rows={3}
-        disabled={busy}
+      <div
         style={{
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
+          overflowY: "auto",
+          borderRadius: 14,
+          border: "1px solid var(--line)",
+          background: "color-mix(in srgb, var(--surface-2) 30%, var(--surface))",
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}
+      >
+        {messages.map((msg, i) => (
+          <div
+            key={`${msg.role}-${i}`}
+            style={{
+              alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
+              maxWidth: "min(100%, 320px)",
+              minWidth: 0,
+              padding: "10px 12px",
+              borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+              fontSize: 13,
+              lineHeight: 1.45,
+              background: msg.role === "user" ? "color-mix(in srgb, var(--accent) 16%, transparent)" : "var(--surface)",
+              border:
+                msg.role === "user"
+                  ? "1px solid color-mix(in srgb, var(--accent) 25%, transparent)"
+                  : "1px solid var(--line)",
+              color: "var(--ink)",
+            }}
+          >
+            {msg.text}
+          </div>
+        ))}
+        {busy ? (
+          <div
+            style={{
+              alignSelf: "flex-start",
+              fontSize: 12,
+              color: "var(--ink-3)",
+              padding: "4px 0",
+            }}
+          >
+            …
+          </div>
+        ) : null}
+      </div>
+
+      <div
+        style={{
+          flexShrink: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          minWidth: 0,
           width: "100%",
           boxSizing: "border-box",
-          resize: "vertical",
-          minHeight: 72,
-          padding: "10px 12px",
-          borderRadius: 10,
+          padding: 10,
+          borderRadius: 14,
           border: "1px solid var(--line)",
-          fontSize: 13,
-          fontFamily: "inherit",
-          color: "var(--ink)",
-          background: "var(--surface)",
-          marginBottom: 8,
+          background: "rgba(255,255,255,.82)",
         }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            submitPrompt();
-          }
-        }}
-      />
-      <button
-        type="button"
-        className="su-btn su-btn-accent"
-        style={{ width: "100%", fontSize: 12, marginBottom: 14 }}
-        disabled={busy || !prompt.trim()}
-        onClick={submitPrompt}
       >
-        {busy ? "Обрабатываем…" : "Применить"}
-        <span style={{ opacity: 0.75, fontWeight: 500, marginLeft: 6 }}>Ctrl+Enter</span>
-      </button>
-
-      <p style={{ margin: 0, fontSize: 11, color: "var(--ink-4)", lineHeight: 1.4 }}>
-        Списывается одна правка по тарифу за запрос. ID: {presentationId ? String(presentationId).slice(0, 8) : "—"}…
-      </p>
-      <div style={{ height: 8 }} />
-    </>
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="Сообщение..."
+          rows={2}
+          disabled={busy}
+          style={{
+            width: "100%",
+            boxSizing: "border-box",
+            resize: "none",
+            minHeight: 44,
+            padding: "10px 12px",
+            borderRadius: 12,
+            border: "1px solid var(--line)",
+            fontSize: 13,
+            fontFamily: "inherit",
+            color: "var(--ink)",
+            background: "var(--surface)",
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              submitPrompt();
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="su-btn su-btn-accent"
+          style={{ width: "100%", fontSize: 13 }}
+          disabled={busy || !prompt.trim()}
+          onClick={submitPrompt}
+        >
+          {busy ? "Отправка..." : "Отправить"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -2332,7 +3323,7 @@ function EditorRightSidebar({
   onDeckAiBusyChange,
   onAuthRequest,
   slidesLength,
-  overlayMode,
+  lastUnlockedSlideIndex,
   panelWidth,
 }) {
   const dock = [
@@ -2357,9 +3348,9 @@ function EditorRightSidebar({
           alignItems: "center",
           gap: 5,
           padding: "5px 9px",
-          borderRadius: 8,
-          border: "1px solid rgba(37,99,235,.18)",
-          background: "rgba(37,99,235,.07)",
+          borderRadius: 999,
+          border: "1px solid color-mix(in srgb, var(--accent) 20%, var(--line))",
+          background: "rgba(255,255,255,.78)",
           fontSize: 11,
           fontWeight: 600,
           color: "var(--accent)",
@@ -2382,150 +3373,178 @@ function EditorRightSidebar({
 
   return (
     <>
-      {overlayMode && activePanel ? (
-        <button
-          type="button"
-          aria-label="Закрыть боковую панель"
-          onClick={() => onActivePanelChange(null)}
-          style={{
-            position: "fixed",
-            inset: "88px 0 24px 0",
-            zIndex: 44,
-            border: "none",
-            background: "rgba(11,31,58,.16)",
-            backdropFilter: "blur(4px)",
-          }}
-        />
-      ) : null}
       <div
         className="editor-right-sidebar"
         style={{
-          position: "fixed",
-          right: 0,
-          top: 88,
-          bottom: 24,
+          alignSelf: "stretch",
+          height: "100%",
+          minHeight: 0,
+          minWidth: 0,
+          flexShrink: 0,
           display: "flex",
           flexDirection: "row",
           alignItems: "stretch",
-          zIndex: 45,
-          borderRadius: "18px 0 0 18px",
+          zIndex: 3,
+          borderRadius: 16,
           overflow: "hidden",
-          border: "1px solid var(--line)",
-          borderRight: "none",
+          background: "transparent",
           boxShadow: activePanel
-            ? overlayMode
-              ? "-18px 0 52px rgba(15,31,58,.16)"
-              : "-12px 0 48px rgba(15,31,58,.07)"
-            : "-4px 0 22px rgba(15,31,58,.05)",
+            ? "0 1px 2px rgba(32,33,36,.04), 0 10px 28px rgba(32,33,36,.07)"
+            : "0 1px 2px rgba(32,33,36,.04), 0 6px 18px rgba(32,33,36,.05)",
           transition: "box-shadow 0.22s ease",
         }}
       >
-      {activePanel ? (
         <div
+          aria-hidden={!activePanel}
           style={{
-            width: panelWidth,
+            width: activePanel ? panelWidth : 0,
             flexShrink: 0,
-            background: "var(--surface)",
-            borderRight: "1px solid var(--line)",
-            display: "flex",
-            flexDirection: "column",
-            minHeight: 0,
-            maxWidth: "calc(100vw - 92px)",
+            minWidth: 0,
+            boxSizing: "border-box",
+            border: activePanel ? "1px solid var(--line)" : "0 solid transparent",
+            borderRight: "none",
+            borderRadius: "16px 0 0 16px",
+            boxShadow: "0 1px 2px rgba(32,33,36,.04), 0 10px 28px rgba(32,33,36,.07)",
+            backdropFilter: "blur(12px)",
+            overflow: "hidden",
+            opacity: activePanel ? 1 : 0,
+            pointerEvents: activePanel ? "auto" : "none",
+            transition: "width 0.22s ease, opacity 0.12s ease",
           }}
         >
-          <SidebarPanelHeader
-            title={titles[activePanel] || ""}
-            onClose={() => onActivePanelChange(null)}
-            extra={activePanel === "design" ? resetChip : null}
-          />
-          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", padding: "16px 18px 20px" }}>
-            {activePanel === "design" ? (
-              <EditorDesignPanel
-                activePresetId={activePresetId}
-                onPresetSelect={onPresetSelect}
-                userPlan={userPlan}
-                customPresetActive={customPresetActive}
-                customPresetPreview={customPresetPreview}
-                canPersistCustom={canPersistCustom}
-                onCustomColorChange={onCustomColorChange}
-                onSaveCustomTheme={onSaveCustomTheme}
-                onApplySavedScheme={onApplySavedScheme}
-                presentationId={presentationId}
-                themeSaveBusy={themeSaveBusy}
-                onLockedPreset={onLockedPreset}
-                publicView={publicView}
-                fontScale={fontScale}
-                onFontScaleChange={onFontScaleChange}
-                pageNumberMode={pageNumberMode}
-                onPageNumberModeChange={onPageNumberModeChange}
-                watermarkMode={watermarkMode}
-                onWatermarkModeChange={onWatermarkModeChange}
-                onReset={onReset}
-                hasOverrides={hasOverrides}
+          <div
+            style={{
+              width: panelWidth,
+              height: "100%",
+              minHeight: 0,
+              boxSizing: "border-box",
+              background: "rgba(255,255,255,.9)",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+          {activePanel ? (
+            <>
+              <SidebarPanelHeader
+                title={titles[activePanel] || ""}
+                onClose={() => onActivePanelChange(null)}
+                extra={activePanel === "design" ? resetChip : null}
               />
-            ) : null}
-            {activePanel === "ai" ? (
-              <EditorAiPanel
-                presentationTitle={presentationTitle}
-                presentationId={presentationId}
-                publicView={publicView}
-                busy={deckAiBusy}
-                onBusyChange={onDeckAiBusyChange}
-                onApplyDeckAssist={onDeckAssist}
-                onAuthRequest={onAuthRequest}
-              />
-            ) : null}
-            {activePanel === "history" ? (
-              <SlideHistoryTab
-                slideIndex={historySlideIndex}
-                slidesLen={slidesLength}
-                onSlideIndexChange={onHistorySlideIndexChange}
-                versionsChrono={historyVersions}
-                currentSlide={historyCurrentSlide}
-                preset={customPresetPreview}
-                previewChronoIndex={historyPreviewChrono}
-                onSetPreview={onHistoryPreviewChange}
-                compareChronoIndex={historyCompareChrono}
-                onSetCompare={onHistoryCompareChange}
-                busy={panelBusy}
-                onRestore={onHistoryRestore}
-                onDuplicate={onHistoryDuplicate}
-                publicView={publicView}
-                localAiOpen={localAiOpen}
-                onToggleLocalAi={onLocalAiOpenChange}
-                localAiMessages={localAiMessages}
-                onSendLocalAi={async (text, focusChrono) => {
-                  onLocalAiMessagesChange((m) => [...m, { role: "user", text }]);
-                  await onSendLocalSlideAi(text, focusChrono);
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  minWidth: 0,
+                  width: "100%",
+                  boxSizing: "border-box",
+                  overflowY: activePanel === "ai" ? "hidden" : "auto",
+                  overflowX: "hidden",
+                  padding: "16px 18px 20px",
+                  display: "flex",
+                  flexDirection: "column",
                 }}
-                localAiBusy={localAiBusy}
-              />
-            ) : null}
-            {activePanel === "export" ? (
-              <EditorExportPanel
-                publicView={publicView}
-                pdfLocked={pdfLocked}
-                onDownload={onDownload}
-                onPdfLocked={onPdfLocked}
-                onShare={onShare}
-                onDemo={onDemo}
-              />
-            ) : null}
+              >
+                {activePanel === "design" ? (
+                  <EditorDesignPanel
+                    activePresetId={activePresetId}
+                    onPresetSelect={onPresetSelect}
+                    userPlan={userPlan}
+                    customPresetActive={customPresetActive}
+                    customPresetPreview={customPresetPreview}
+                    canPersistCustom={canPersistCustom}
+                    onCustomColorChange={onCustomColorChange}
+                    onSaveCustomTheme={onSaveCustomTheme}
+                    onApplySavedScheme={onApplySavedScheme}
+                    presentationId={presentationId}
+                    themeSaveBusy={themeSaveBusy}
+                    onLockedPreset={onLockedPreset}
+                    publicView={publicView}
+                    fontScale={fontScale}
+                    onFontScaleChange={onFontScaleChange}
+                    pageNumberMode={pageNumberMode}
+                    onPageNumberModeChange={onPageNumberModeChange}
+                    watermarkMode={watermarkMode}
+                    onWatermarkModeChange={onWatermarkModeChange}
+                    onReset={onReset}
+                    hasOverrides={hasOverrides}
+                  />
+                ) : null}
+                {activePanel === "ai" ? (
+                  <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                    <EditorAiPanel
+                      presentationTitle={presentationTitle}
+                      presentationId={presentationId}
+                      publicView={publicView}
+                      busy={deckAiBusy}
+                      onBusyChange={onDeckAiBusyChange}
+                      onApplyDeckAssist={onDeckAssist}
+                      onAuthRequest={onAuthRequest}
+                    />
+                  </div>
+                ) : null}
+                {activePanel === "history" ? (
+                  <SlideHistoryTab
+                    slideIndex={historySlideIndex}
+                    slidesLen={slidesLength}
+                    lastUnlockedSlideIndex={lastUnlockedSlideIndex}
+                    onSlideIndexChange={onHistorySlideIndexChange}
+                    versionsChrono={historyVersions}
+                    currentSlide={historyCurrentSlide}
+                    preset={customPresetPreview}
+                    previewChronoIndex={historyPreviewChrono}
+                    onSetPreview={onHistoryPreviewChange}
+                    compareChronoIndex={historyCompareChrono}
+                    onSetCompare={onHistoryCompareChange}
+                    busy={panelBusy}
+                    onRestore={onHistoryRestore}
+                    onDuplicate={onHistoryDuplicate}
+                    publicView={publicView}
+                    localAiOpen={localAiOpen}
+                    onToggleLocalAi={onLocalAiOpenChange}
+                    localAiMessages={localAiMessages}
+                    onSendLocalAi={async (text, focusChrono) => {
+                      onLocalAiMessagesChange((m) => [...m, { role: "user", text }]);
+                      await onSendLocalSlideAi(text, focusChrono);
+                    }}
+                    localAiBusy={localAiBusy}
+                  />
+                ) : null}
+                {activePanel === "export" ? (
+                  <EditorExportPanel
+                    publicView={publicView}
+                    pdfLocked={pdfLocked}
+                    onDownload={onDownload}
+                    onPdfLocked={onPdfLocked}
+                    onShare={onShare}
+                    onDemo={onDemo}
+                  />
+                ) : null}
+              </div>
+            </>
+          ) : null}
           </div>
         </div>
-      ) : null}
-
       <div
         style={{
           width: EDITOR_DOCK_WIDTH,
+          minHeight: 0,
+          alignSelf: "stretch",
           flexShrink: 0,
-          background: "linear-gradient(180deg, var(--surface) 0%, color-mix(in srgb, var(--surface-2) 92%, var(--surface)) 100%)",
+          border: "1px solid var(--line)",
+          borderRadius: activePanel ? "0 16px 16px 0" : 16,
+          boxShadow: activePanel
+            ? "0 1px 2px rgba(32,33,36,.04), 0 10px 28px rgba(32,33,36,.07)"
+            : "0 1px 2px rgba(32,33,36,.04), 0 6px 18px rgba(32,33,36,.05)",
+          background: "rgba(255,255,255,.8)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          padding: "16px 0",
-          gap: 14,
+          justifyContent: "flex-start",
+          gap: 10,
           boxSizing: "border-box",
+          padding: "14px 8px",
+          backdropFilter: "blur(12px)",
+          overflow: "hidden",
         }}
       >
         {dock.map((item) => {
@@ -2539,20 +3558,27 @@ function EditorRightSidebar({
               aria-pressed={on}
               onClick={() => toggleDock(item.id)}
               style={{
-                width: 52,
-                height: 52,
-                borderRadius: 14,
-                border: on ? "2px solid color-mix(in srgb, var(--accent) 42%, transparent)" : "1px solid var(--line)",
-                background: on ? "color-mix(in srgb, var(--accent) 11%, var(--surface))" : "var(--surface)",
-                boxShadow: on ? "0 4px 16px rgba(37,99,235,.14)" : "0 1px 4px rgba(15,31,58,.05)",
+                width: "100%",
+                minHeight: 62,
+                borderRadius: 12,
+                border: on ? "1px solid color-mix(in srgb, var(--accent) 35%, var(--line))" : "1px solid transparent",
+                background: on ? "color-mix(in srgb, var(--accent) 10%, rgba(255,255,255,.98))" : "rgba(255,255,255,.6)",
+                boxShadow: on ? "0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent)" : "none",
                 cursor: "pointer",
-                display: "grid",
-                placeItems: "center",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 5,
                 color: on ? "var(--accent)" : "var(--ink-2)",
                 transition: "border-color 0.18s ease, box-shadow 0.18s ease, color 0.18s ease, background 0.18s ease",
+                padding: "8px 6px",
               }}
             >
               <Icon name={item.icon} size={24} stroke={on ? 2.1 : 1.85} />
+              <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.1 }}>
+                {item.id === "design" ? "Стиль" : item.id === "ai" ? "ИИ" : "Экспорт"}
+              </span>
             </button>
           );
         })}
@@ -2691,6 +3717,11 @@ function SlideCanvas({
   const W = slideWidth || 1200;
   const H = slideHeight || Math.round((W * 9) / 16);
   const layoutUnit = (W / 1200) * fontScale;
+  /** Внутренние поля контента слайда (% ширины). */
+  const slidePadPct = 6.5;
+  /** Доп. отступ счётчика/знака от правого края — ближе к колонке заголовка. */
+  const pageCounterCornerExtraPct = 4;
+  const pageCounterRightPct = slidePadPct + pageCounterCornerExtraPct;
 
   const icon = typeof slide?.icon === "string" ? slide.icon.trim() : "";
   const chart = slide?.chart && Array.isArray(slide.chart.data) && slide.chart.data.length >= 2 ? slide.chart : null;
@@ -2754,7 +3785,7 @@ function SlideCanvas({
         position: "relative",
         display: "flex",
         flexDirection: "column",
-        padding: "6.5%",
+        padding: `${slidePadPct}%`,
         boxSizing: "border-box",
       }}
     >
@@ -2770,6 +3801,7 @@ function SlideCanvas({
             alignItems: "center",
             gap: chromeGap,
             pointerEvents: "none",
+            marginRight: `${pageCounterCornerExtraPct}%`,
           }}
         >
           {showWmTR ? <div style={watermarkLabelStyle}>SlideUp</div> : null}
@@ -2821,9 +3853,24 @@ function SlideCanvas({
                     lineHeight: 1.36,
                   }}
                 >
-                  <span style={{ color: preset.accent, fontFamily: "var(--font-mono)", fontSize: "0.68em", fontWeight: 700 }}>
-                    {String(bulletIndex + 1).padStart(2, "0")}
-                  </span>
+                  <EditableField
+                    tag="span"
+                    style={{
+                      color: preset.accent,
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "0.68em",
+                      fontWeight: 700,
+                      minWidth: Math.round(24 * layoutUnit),
+                      display: "inline-block",
+                    }}
+                    value={getSlideBulletMarker(slide, bulletIndex)}
+                    onChange={onSlideChange ? (v) => {
+                      const nextMarkers = bullets.map((_, i) =>
+                        i === bulletIndex ? String(v ?? "") : getSlideBulletMarker(slide, i)
+                      );
+                      onSlideChange({ ...slide, bulletMarkers: nextMarkers });
+                    } : null}
+                  />
                   <EditableField
                     tag="span"
                     value={String(item)}
@@ -2897,8 +3944,8 @@ function SlideCanvas({
         <div
           style={{
             position: "absolute",
-            right: "6.5%",
-            bottom: "6.5%",
+            right: `${pageCounterRightPct}%`,
+            bottom: `${slidePadPct}%`,
             display: "flex",
             flexDirection: "row",
             alignItems: "center",
@@ -2920,24 +3967,222 @@ function SlideCanvas({
   );
 }
 
-function SlideThumbnail({ slide, index, total, preset }) {
-  return <DeckSlideThumbCanvas slide={slide} index={index} total={total} preset={preset} />;
+function SlideThumbnail({
+  slide,
+  index,
+  total,
+  preset,
+  fontScale = 1,
+  pageNumberMode = DEFAULT_PAGE_NUMBER_MODE,
+  watermarkMode = DEFAULT_WATERMARK_MODE,
+  slideWidth = null,
+  slideHeight = null,
+  cornerRadius = 8,
+}) {
+  return (
+    <DeckSlideThumbCanvas
+      slide={slide}
+      index={index}
+      total={total}
+      preset={preset}
+      fontScale={fontScale}
+      pageNumberMode={pageNumberMode}
+      watermarkMode={watermarkMode}
+      slideWidth={slideWidth}
+      slideHeight={slideHeight}
+      cornerRadius={cornerRadius}
+    />
+  );
 }
 
-function CanvasButton({ label, icon, onClick }) {
+const SLIDE_FILMSTRIP_WIDTH = 198;
+const SLIDE_FILMSTRIP_THUMB_RADIUS = 8;
+
+function SlideFilmstripSidebar({
+  slides,
+  currentSlide,
+  onSlideSelect,
+  unlockedSlideCount,
+  preset,
+  accent,
+  fontScale = 1,
+  pageNumberMode = DEFAULT_PAGE_NUMBER_MODE,
+  watermarkMode = DEFAULT_WATERMARK_MODE,
+  slideWidth = null,
+  slideHeight = null,
+  moveSlide,
+  leadingInsetPx = 8,
+}) {
+  const activeRowRef = useRef(null);
+
+  useEffect(() => {
+    activeRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [currentSlide]);
+
+  const navDisabled = unlockedSlideCount <= 1;
+
+  return (
+    <div
+      style={{
+        width: SLIDE_FILMSTRIP_WIDTH,
+        flexShrink: 0,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        alignSelf: "stretch",
+        borderRight: "1px solid color-mix(in srgb, var(--line) 42%, transparent)",
+        background: "transparent",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          paddingTop: 10,
+          paddingRight: 8,
+          paddingBottom: 12,
+          paddingLeft: leadingInsetPx,
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          WebkitOverflowScrolling: "touch",
+        }}
+      >
+        {slides.map((slide, index) => {
+          const active = currentSlide === index;
+          const locked = index >= unlockedSlideCount;
+          return (
+            <div
+              key={`filmstrip-${index}-${getSlideTitle(slide, index)}`}
+              ref={active ? activeRowRef : undefined}
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "flex-start",
+                gap: 5,
+              }}
+            >
+              <span
+                style={{
+                  width: 22,
+                  flexShrink: 0,
+                  textAlign: "right",
+                  fontSize: 12,
+                  fontFamily: "var(--font-mono)",
+                  fontWeight: 600,
+                  color: active ? accent : "var(--ink-4)",
+                  paddingTop: 5,
+                  lineHeight: 1,
+                }}
+              >
+                {index + 1}
+              </span>
+              <button
+                type="button"
+                onClick={() => onSlideSelect(index)}
+                aria-disabled={locked}
+                title={locked ? "Слайд откроется после пополнения лимита слайдов" : getSlideTitle(slide, index)}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  margin: 0,
+                  padding: 4,
+                  borderRadius: SLIDE_FILMSTRIP_THUMB_RADIUS + 2,
+                  border: "none",
+                  background: active ? `color-mix(in srgb, ${accent} 14%, transparent)` : "transparent",
+                  cursor: locked ? "not-allowed" : "pointer",
+                  outline: "none",
+                  textAlign: "left",
+                  transition: "background 0.15s, opacity 0.15s",
+                  boxShadow: "none",
+                  opacity: locked ? 0.72 : 1,
+                  position: "relative",
+                }}
+              >
+                <div
+                  style={{
+                    position: "relative",
+                    borderRadius: SLIDE_FILMSTRIP_THUMB_RADIUS,
+                    overflow: "hidden",
+                  }}
+                >
+                  <SlideThumbnail
+                    slide={slide}
+                    index={index}
+                    total={slides.length}
+                    preset={preset}
+                    fontScale={fontScale}
+                    pageNumberMode={pageNumberMode}
+                    watermarkMode={watermarkMode}
+                    slideWidth={slideWidth}
+                    slideHeight={slideHeight}
+                    cornerRadius={SLIDE_FILMSTRIP_THUMB_RADIUS}
+                  />
+                  {locked ? (
+                    <div
+                      aria-hidden
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        display: "grid",
+                        placeItems: "center",
+                        background: "color-mix(in srgb, var(--ink) 38%, transparent)",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      <Icon name="lock" size={28} stroke={2} style={{ color: "rgba(255,255,255,.92)" }} />
+                    </div>
+                  ) : null}
+                </div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div
+        style={{
+          flexShrink: 0,
+          borderTop: "1px solid var(--line)",
+          padding: "8px 6px",
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+          background: "transparent",
+        }}
+      >
+        <CanvasButton label="Предыдущий слайд" icon="arrow-left" onClick={() => moveSlide(-1)} disabled={navDisabled} />
+        <CanvasButton label="Следующий слайд" icon="arrow-right" onClick={() => moveSlide(1)} disabled={navDisabled} />
+      </div>
+    </div>
+  );
+}
+
+function CanvasButton({ label, icon, onClick, disabled = false }) {
   return (
     <button
+      type="button"
+      disabled={disabled}
       onClick={onClick}
       title={label}
+      aria-label={label}
       style={{
         width: 40,
         height: 40,
-        borderRadius: 10,
+        borderRadius: 999,
         display: "grid",
         placeItems: "center",
-        background: "rgba(37,99,235,.12)",
+        background: disabled ? "rgba(255,255,255,.5)" : "rgba(255,255,255,.92)",
         color: "inherit",
-        border: "1px solid rgba(37,99,235,.18)",
+        border: "1px solid var(--line)",
+        opacity: disabled ? 0.45 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
+        boxShadow: disabled ? "none" : "0 1px 2px rgba(32,33,36,.05)",
       }}
     >
       <Icon name={icon} size={16} />

@@ -11,6 +11,9 @@ export default defineConfig({
     },
   },
   server: {
+    fs: {
+      allow: [__dirname, path.resolve(__dirname, "../shared")],
+    },
     host: true,
     port: 5173,
     proxy: {

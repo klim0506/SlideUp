@@ -40,12 +40,23 @@ class PresentationViewSet(viewsets.ModelViewSet):
         if presentation.is_public:
             return Response(self.get_serializer(presentation).data)
 
-        if not request.user.is_authenticated or presentation.user_id != request.user.id:
-            return Response(
-                {"detail": "Not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        return Response(self.get_serializer(presentation).data)
+        # Владелец по аккаунту
+        if request.user.is_authenticated and presentation.user_id == request.user.id:
+            return Response(self.get_serializer(presentation).data)
+
+        # Генерация без JWT: презентация с user=None и session_key сессии Django.
+        # При следующем запросе с тем же session cookie доступ есть; если уже с JWT и тот же session — закрепляем за пользователем.
+        session_key = request.session.session_key or ""
+        if presentation.user_id is None and presentation.session_key and session_key == presentation.session_key:
+            if request.user.is_authenticated:
+                presentation.user = request.user
+                presentation.save(update_fields=("user",))
+            return Response(self.get_serializer(presentation).data)
+
+        return Response(
+            {"detail": "Not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
     def destroy(self, request, *args, **kwargs):
         presentation = self._get_owned_presentation()

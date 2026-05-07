@@ -1,0 +1,40 @@
+# Только PostgreSQL и Redis — бэкенд и Celery запускайте на хосте (для Claude CLI и т.п.).
+# Запуск:  docker compose -f docker-compose.infra.yml up -d
+# Остановка: docker compose -f docker-compose.infra.yml down
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: slidegen-db-infra
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-slidegen}
+      POSTGRES_USER: ${POSTGRES_USER:-slidegen}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-slidegen}
+    ports:
+      - "${POSTGRES_PUBLISH_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-slidegen} -d ${POSTGRES_DB:-slidegen}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: slidegen-redis-infra
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PUBLISH_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:

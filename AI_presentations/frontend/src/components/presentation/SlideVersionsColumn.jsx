@@ -2,48 +2,45 @@ import { useRef, useState } from "react";
 import { Icon } from "@/lib/design";
 import { DeckSlideThumbCanvas } from "@/lib/slidePreview";
 
-function VersionCard({ entry, isNewest, busy, slideIndex, total, preset, onClick }) {
+function VersionThumb({
+  slide,
+  slideIndex,
+  total,
+  preset,
+  active,
+  onClick,
+  children,
+  title,
+  disabled = false,
+  fadeWhenInactive = true,
+}) {
+  const inactiveDim = fadeWhenInactive && !active;
+  const opacity = active ? 1 : disabled ? 0.42 : inactiveDim ? 0.5 : 1;
   return (
-    <div
+    <button
+      type="button"
+      title={title}
       onClick={onClick}
-      title={`v${entry.versionNumber}${entry.summary ? " — " + entry.summary : ""}${isNewest ? " (текущая)" : " — нажмите, чтобы восстановить"}`}
+      disabled={disabled}
       style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 2,
-        cursor: isNewest ? "default" : busy ? "not-allowed" : "pointer",
-        borderRadius: 7,
-        padding: "3px 3px 2px",
-        border: isNewest ? "1.5px solid var(--accent)" : "1px solid var(--line)",
-        background: isNewest ? "rgba(37,99,235,.07)" : "var(--surface-2)",
-        transition: "border-color 0.12s",
+        width: 68,
         flexShrink: 0,
-        opacity: busy && !isNewest ? 0.6 : 1,
+        padding: 0,
+        border: active ? "1px solid color-mix(in srgb, var(--accent) 28%, var(--line))" : "1px solid transparent",
+        borderRadius: 10,
+        background: active ? "var(--surface)" : "transparent",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity,
+        boxShadow: active ? "0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent)" : "none",
       }}
     >
-      <div style={{ width: 56, height: 32, borderRadius: 4, overflow: "hidden" }}>
-        <DeckSlideThumbCanvas slide={entry.slide} index={slideIndex} total={total} preset={preset} />
+      <div style={{ width: 68, height: 40, borderRadius: 9, overflow: "hidden", boxShadow: "0 0 0 1px rgba(32,33,36,.08)" }}>
+        {children || <DeckSlideThumbCanvas slide={slide} index={slideIndex} total={total} preset={preset} />}
       </div>
-      <span
-        style={{
-          fontSize: 9,
-          fontFamily: "var(--font-mono)",
-          fontWeight: isNewest ? 800 : 600,
-          color: isNewest ? "var(--accent)" : "var(--ink-3)",
-          lineHeight: 1,
-        }}
-      >
-        v{entry.versionNumber}
-      </span>
-    </div>
+    </button>
   );
 }
 
-/**
- * Left-column version strip: oldest at top, newest at bottom (highlighted).
- * Below cards: sparkles button opens a floating reprompt popover.
- */
 export function SlideVersionsColumn({
   versionsChrono,
   slideIndex,
@@ -54,25 +51,172 @@ export function SlideVersionsColumn({
   localAiBusy,
   busy,
   publicView,
+  variant = "below",
 }) {
   const [aiOpen, setAiOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const newestIndex = versionsChrono.length - 1;
+  const isBelow = variant === "below";
   const btnRef = useRef(null);
 
-  const entries = versionsChrono.map((entry, i) => ({
-    ...entry,
-    versionNumber: i + 1,
-    _chronoIndex: i,
-  }));
-
-  const newestIndex = versionsChrono.length - 1;
-
   function handleSend() {
-    const t = draft.trim();
-    if (!t || localAiBusy || busy) return;
-    void onSendAi(t, newestIndex >= 0 ? newestIndex : 0);
+    const text = draft.trim();
+    if (!text || localAiBusy || busy) return;
+    void onSendAi(text, newestIndex >= 0 ? newestIndex : 0);
     setDraft("");
     setAiOpen(false);
+  }
+
+  const aiThumb = !publicView ? (
+    <div style={{ position: "relative", flexShrink: 0 }}>
+      <VersionThumb
+        active={aiOpen}
+        fadeWhenInactive={false}
+        disabled={busy || localAiBusy}
+        onClick={() => setAiOpen((v) => !v)}
+        title="Новый вариант с помощью ИИ"
+      >
+        <div
+          style={{
+            width: "100%",
+            height: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "color-mix(in srgb, var(--accent) 10%, rgba(255,255,255,.96))",
+            color: localAiBusy ? "var(--ink-4)" : "var(--accent)",
+          }}
+        >
+          <Icon name={localAiBusy ? "loader" : "sparkles"} size={18} />
+        </div>
+      </VersionThumb>
+
+      {aiOpen ? (
+        <div
+          style={{
+            position: "absolute",
+            zIndex: 60,
+            right: 0,
+            bottom: "calc(100% + 8px)",
+            width: 260,
+            background: "rgba(255,255,255,.97)",
+            border: "1px solid var(--line)",
+            borderRadius: 12,
+            padding: 10,
+            boxShadow: "0 12px 36px rgba(32,33,36,.14)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            backdropFilter: "blur(12px)",
+          }}
+        >
+          <textarea
+            ref={btnRef}
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Что изменить?"
+            rows={3}
+            disabled={busy || localAiBusy}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              resize: "none",
+              minHeight: 72,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--line)",
+              fontSize: 12,
+              fontFamily: "inherit",
+              color: "var(--ink)",
+              background: "var(--surface)",
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                handleSend();
+              }
+              if (e.key === "Escape") setAiOpen(false);
+            }}
+          />
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              className="su-btn su-btn-accent"
+              style={{ flex: 1, fontSize: 12 }}
+              disabled={busy || localAiBusy || !draft.trim()}
+              onClick={handleSend}
+            >
+              {localAiBusy ? "Генерирую..." : "Создать вариант"}
+            </button>
+            <button
+              type="button"
+              className="su-btn su-btn-outline"
+              style={{ fontSize: 12, padding: "4px 10px" }}
+              onClick={() => setAiOpen(false)}
+            >
+              Закрыть
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  const versionItems = versionsChrono.map((entry, i) => {
+    const active = i === newestIndex;
+    return (
+      <VersionThumb
+        key={`${entry.at}-${i}`}
+        slide={entry.slide}
+        slideIndex={slideIndex}
+        total={slidesLen}
+        preset={preset}
+        active={active}
+        disabled={busy || active}
+        title={`Версия v${i + 1}`}
+        onClick={() => {
+          if (!publicView && !active && !busy && onActivate) onActivate(i);
+        }}
+      />
+    );
+  });
+
+  const strip = (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: isBelow ? "row" : "column",
+        alignItems: "center",
+        justifyContent: isBelow ? "center" : undefined,
+        width: isBelow ? "100%" : undefined,
+        minWidth: isBelow ? 0 : undefined,
+        gap: 8,
+        overflowX: isBelow ? "auto" : "hidden",
+        overflowY: isBelow ? "hidden" : "auto",
+        padding: 0,
+        WebkitOverflowScrolling: "touch",
+      }}
+    >
+      {versionItems}
+      {aiThumb}
+    </div>
+  );
+
+  if (isBelow) {
+    return (
+      <div
+        style={{
+          flexShrink: 0,
+          width: "100%",
+          marginTop: 8,
+          paddingTop: 8,
+          minWidth: 0,
+        }}
+      >
+        {strip}
+      </div>
+    );
   }
 
   return (
@@ -82,166 +226,10 @@ export function SlideVersionsColumn({
         flexDirection: "column",
         alignItems: "center",
         flexShrink: 0,
-        gap: 4,
-        width: 68,
-        position: "relative",
+        width: 76,
       }}
     >
-      {/* Cards: oldest at top → newest at bottom */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-          overflowY: "auto",
-          maxHeight: "calc(100% - 44px)",
-          alignItems: "center",
-          width: "100%",
-          paddingBottom: 2,
-        }}
-      >
-        {entries.length === 0 ? (
-          <div
-            style={{
-              width: 56,
-              height: 32,
-              borderRadius: 7,
-              border: "1px dashed var(--line)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              opacity: 0.45,
-            }}
-            title="Нет сохранённых версий"
-          >
-            <Icon name="layers" size={13} />
-          </div>
-        ) : (
-          entries.map((entry) => {
-            const isNewest = entry._chronoIndex === newestIndex;
-            return (
-              <VersionCard
-                key={`${entry.at}-${entry.versionNumber}`}
-                entry={entry}
-                isNewest={isNewest}
-                busy={busy}
-                slideIndex={slideIndex}
-                total={slidesLen}
-                preset={preset}
-                onClick={() => {
-                  if (!publicView && !isNewest && !busy && onActivate) {
-                    onActivate(entry._chronoIndex);
-                  }
-                }}
-              />
-            );
-          })
-        )}
-      </div>
-
-      {/* Reprompt button */}
-      {!publicView ? (
-        <div style={{ position: "relative", flexShrink: 0 }}>
-          <button
-            ref={btnRef}
-            type="button"
-            title="Допромптить слайд через ИИ"
-            onClick={() => setAiOpen((o) => !o)}
-            disabled={busy || localAiBusy}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              border: aiOpen ? "1.5px solid var(--accent)" : "1px solid var(--line)",
-              background: aiOpen ? "rgba(37,99,235,.08)" : "var(--surface-2)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: busy || localAiBusy ? "not-allowed" : "pointer",
-              color: localAiBusy ? "var(--ink-4)" : aiOpen ? "var(--accent)" : "var(--ink-3)",
-              opacity: busy || localAiBusy ? 0.6 : 1,
-              transition: "border-color 0.12s, background 0.12s",
-            }}
-          >
-            {localAiBusy ? (
-              <Icon name="loader" size={13} />
-            ) : (
-              <Icon name="sparkles" size={13} />
-            )}
-          </button>
-
-          {aiOpen ? (
-            <div
-              style={{
-                position: "absolute",
-                left: "calc(100% + 10px)",
-                bottom: 0,
-                zIndex: 60,
-                width: 220,
-                background: "var(--surface)",
-                border: "1px solid var(--line)",
-                borderRadius: 10,
-                padding: 10,
-                boxShadow: "0 8px 32px rgba(15,23,42,.18)",
-                display: "flex",
-                flexDirection: "column",
-                gap: 7,
-              }}
-            >
-              <div style={{ fontSize: 10, color: "var(--ink-3)", lineHeight: 1.4 }}>
-                Перегенерировать слайд {slideIndex + 1}
-                {newestIndex >= 0 ? ` (основа: v${newestIndex + 1})` : ""}
-              </div>
-              <textarea
-                autoFocus
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder="Что изменить? (Ctrl+Enter — отправить)"
-                rows={3}
-                disabled={localAiBusy || busy}
-                style={{
-                  width: "100%",
-                  resize: "none",
-                  fontSize: 12,
-                  borderRadius: 8,
-                  border: "1px solid var(--line)",
-                  padding: "6px 8px",
-                  background: "var(--surface)",
-                  color: "var(--ink)",
-                  fontFamily: "inherit",
-                  boxSizing: "border-box",
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                  if (e.key === "Escape") setAiOpen(false);
-                }}
-              />
-              <div style={{ display: "flex", gap: 5 }}>
-                <button
-                  type="button"
-                  className="su-btn su-btn-accent"
-                  style={{ flex: 1, fontSize: 11 }}
-                  disabled={localAiBusy || busy || !draft.trim()}
-                  onClick={handleSend}
-                >
-                  {localAiBusy ? "Генерирую…" : "Отправить"}
-                </button>
-                <button
-                  type="button"
-                  className="su-btn su-btn-outline"
-                  style={{ fontSize: 11, padding: "4px 8px" }}
-                  onClick={() => setAiOpen(false)}
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {strip}
     </div>
   );
 }
