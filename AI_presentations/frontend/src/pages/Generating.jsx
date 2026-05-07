@@ -51,6 +51,7 @@ export default function Generating() {
           prompt: cfg.prompt,
           slides_count: cfg.slides_count || cfg.slideCount || 5,
           theme: cfg.theme || "light",
+          style: cfg.style || "pitch",
         }),
       });
 

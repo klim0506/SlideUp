@@ -15,7 +15,7 @@ from .claude import ClaudePresentationClient
 from .claude_client import call_claude, get_claude_mode
 from .models import GenerationJob
 from .postprocessing import parse_json, postprocess
-from .prompts import SYSTEM_PROMPT, build_prompt
+from .prompts import KNOWN_STYLES, SYSTEM_PROMPT, build_prompt
 from .serializers import GenerationRequestSerializer
 from .source_material import process_uploaded_source
 
@@ -169,6 +169,8 @@ class GeneratePresentationView(APIView):
             request.user if _is_authenticated(request) else None,
             request.data.get("theme", "light") or "light",
         )
+        raw_style = (request.data.get("style") or "pitch").strip()
+        style = raw_style if raw_style in KNOWN_STYLES else "pitch"
         slides_count = _parse_slides_count(request.data.get("slides_count", 8))
         session_key = _ensure_session_key(request)
 
@@ -222,7 +224,7 @@ class GeneratePresentationView(APIView):
         try:
             data = _call_claude_with_json_retry(
                 SYSTEM_PROMPT,
-                build_prompt(topic=topic, slides_count=slides_count, context=context_extra, has_image=bool(image_sources)),
+                build_prompt(topic=topic, slides_count=slides_count, context=context_extra, has_image=bool(image_sources), style=style),
                 lambda raw: postprocess(raw, expected_slides_count=slides_count),
                 image_sources=image_sources,
             )
@@ -246,6 +248,7 @@ class GeneratePresentationView(APIView):
             user=user,
             session_key=session_key,
             title=data["title"],
+            style=style,
             theme=theme,
             slides=data["slides"],
             assets=assets,
@@ -271,6 +274,7 @@ class GeneratePresentationView(APIView):
                 "title": presentation.title,
                 "slides": presentation.slides,
                 "theme": presentation.theme,
+                "style": presentation.style,
             },
             status=status.HTTP_201_CREATED,
         )

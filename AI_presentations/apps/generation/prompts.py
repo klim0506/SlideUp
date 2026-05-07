@@ -45,7 +45,7 @@ PRESENTATION_JSON_SCHEMA = {
                                     "type": "object",
                                     "required": ["label", "value"],
                                     "properties": {
-                                        "label": {"type": "string", "maxLength": 24},
+                                        "label": {"type": "string", "maxLength": 12},
                                         "value": {"type": "number"},
                                     },
                                 },
@@ -83,12 +83,70 @@ SYSTEM_PROMPT = (
     "If information is missing, infer a practical business-oriented structure instead of asking questions.\n\n"
     "VISUAL ENRICHMENT RULES:\n"
     "1. chart: On 'stats' slides with quantitative data (revenue, percentages, comparisons), add a 'chart' object with type='bar' and 2-8 data points. Only use chart when real numbers exist or can be inferred from context.\n"
+    "   CRITICAL for charts: every label must be 1-2 short words (max 12 characters). Never use full sentences, long phrases, or abbreviations that need explanation. Labels must never overlap — if a label doesn't fit in 12 chars, rephrase it.\n"
     "2. image: If the user provided a source image, set image=true on EXACTLY ONE slide where the image is most relevant to the visual context. Do NOT set image=true if no source image was provided.\n"
-    "3. stats: On 'stats' slides, populate the 'stats' array with 2-4 key metrics (value + label)."
+    "3. stats: On 'stats' slides, populate the 'stats' array with 2-4 key metrics (value + label). Keep each label under 3 words."
 )
 
+# Style-specific instructions injected into the user prompt at generation time.
+_VISUAL_FREEDOM = (
+    "Visual freedom: look for every opportunity to show instead of tell — "
+    "turn a comparison into 'two_column', a claim into 'stats' with a chart, "
+    "a turning point or key idea into a 'quote', a call to action into 'cta'. "
+    "Use as few words as possible. Prefer zero bullets if a visual communicates better."
+)
 
-def build_prompt(topic, context="", audience="", slides_count=8, tone="", language="Russian", has_image=False) -> str:
+STYLE_INSTRUCTIONS: dict[str, str] = {
+    "pitch": (
+        "Presentation style: MINIMALIST.\n"
+        "Audience goal: make them lean forward, feel the idea, want to know more.\n"
+        "Tone: confident, surprising, visual — each slide earns its place.\n"
+        f"{_VISUAL_FREEDOM}\n"
+        "Do not follow a template. Find the single most compelling narrative arc for this specific topic."
+    ),
+    "report": (
+        "Presentation style: DETAILED REPORT.\n"
+        "Audience goal: a reader with no presenter must fully understand the findings and act on them.\n"
+        "Tone: formal, evidence-based, precise — back every claim with data or reasoning.\n"
+        f"{_VISUAL_FREEDOM}\n"
+        "Write complete sentences where needed. Every slide must be self-explanatory."
+    ),
+    "lecture": (
+        "Presentation style: EDUCATIONAL.\n"
+        "Audience goal: the audience leaves understanding a concept they didn't before.\n"
+        "Tone: clear, pedagogical, engaging — build knowledge step by step.\n"
+        f"{_VISUAL_FREEDOM}\n"
+        "Use 'quote' for definitions and axioms. Let the structure follow the learning arc, not a fixed template."
+    ),
+    "analytical": (
+        "Presentation style: ANALYTICAL BRIEF.\n"
+        "Audience goal: decision-makers leave with a clear recommendation and the reasoning behind it.\n"
+        "Tone: analytical, action-oriented, factual — focus on decisions, not descriptions.\n"
+        f"{_VISUAL_FREEDOM}\n"
+        "Use 'two_column' for trade-offs and comparisons. Let the data drive the structure."
+    ),
+    "proposal": (
+        "Presentation style: COMMERCIAL PROPOSAL.\n"
+        "Audience goal: the client sees their own problem reflected, believes in the solution, and knows the next step.\n"
+        "Tone: benefit-driven, persuasive, credible — speak to goals, not features.\n"
+        f"{_VISUAL_FREEDOM}\n"
+        "End with a strong 'cta' slide. Let the client's pain shape the narrative, not a sales template."
+    ),
+}
+
+KNOWN_STYLES = frozenset(STYLE_INSTRUCTIONS.keys())
+
+
+def build_prompt(
+    topic,
+    context="",
+    audience="",
+    slides_count=8,
+    tone="",
+    language="Russian",
+    has_image=False,
+    style="pitch",
+) -> str:
     """Build the user prompt for generating a structured slide deck JSON payload."""
     prompt_parts = [
         f"Topic: {topic}",
@@ -101,6 +159,9 @@ def build_prompt(topic, context="", audience="", slides_count=8, tone="", langua
         prompt_parts.append(f"Audience: {audience}")
     if tone:
         prompt_parts.append(f"Tone: {tone}")
+
+    style_key = style if style in KNOWN_STYLES else "pitch"
+    prompt_parts.extend(["", STYLE_INSTRUCTIONS[style_key]])
 
     image_rule = (
         "- A source image WAS uploaded. Set image=true on exactly one slide where it fits best."
@@ -116,7 +177,7 @@ def build_prompt(topic, context="", audience="", slides_count=8, tone="", langua
             "- Use only these slide types: title, content, two_column, quote, stats, cta.",
             "- The first slide must be type title.",
             "- Keep every slide title under 80 characters.",
-            "- Use 0-5 bullets per slide; each bullet must be under 120 characters.",
+            "- Bullets: use as few as the content demands; prefer zero if a visual type communicates better. Max 5, each under 120 characters.",
             "- Add chart to stats slides when quantitative data is present.",
             image_rule,
             "- Do not include markdown, explanations, trailing commas, or comments.",

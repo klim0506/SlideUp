@@ -15,6 +15,7 @@ class Presentation(models.Model):
     )
     session_key = models.CharField(max_length=128, blank=True)
     title = models.CharField(max_length=255)
+    style = models.CharField(max_length=32, default="pitch")
     theme = models.CharField(max_length=32, default="light")
     theme_custom = models.JSONField(null=True, blank=True)
     slides = models.JSONField(default=list, blank=True)

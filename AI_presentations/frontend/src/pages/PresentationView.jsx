@@ -947,18 +947,18 @@ export default function PresentationView({ id, publicView = false }) {
     >
       <AppHeader user={user} active="library" onLibrary={() => navigate(publicView ? "/" : "/dashboard")} onLogout={() => { logout(); navigate("/"); }} />
 
+      <div style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
       <main
         className="viewer-layout"
         style={{
           flex: 1,
           minHeight: 0,
+          minWidth: 0,
           display: "flex",
           flexDirection: "column",
-          width: "100%",
           overflow: "hidden",
           padding: "20px 24px 20px",
-          paddingRight: 24 + EDITOR_DOCK_WIDTH + (editorSidebarPanel && !sidebarOverlay ? sidebarPanelWidth : 0),
-          transition: "padding-right 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
+          paddingRight: 24,
         }}
       >
         <section style={{ minWidth: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -1226,6 +1226,48 @@ export default function PresentationView({ id, publicView = false }) {
         </section>
       </main>
 
+      {/* ── Permanent AI right column ── */}
+      {!publicView && !sidebarOverlay && (
+        <div
+          style={{
+            width: 320,
+            flexShrink: 0,
+            borderLeft: "1px solid var(--line)",
+            background: "var(--surface)",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            paddingRight: EDITOR_DOCK_WIDTH,
+          }}
+        >
+          <div
+            style={{
+              padding: "14px 16px 12px",
+              borderBottom: "1px solid var(--line)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexShrink: 0,
+            }}
+          >
+            <Icon name="sparkles" size={14} style={{ color: "var(--accent)" }} />
+            <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>ИИ презентации</span>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 20px" }}>
+            <EditorAiPanel
+              presentationTitle={presentation?.title || ""}
+              presentationId={id}
+              publicView={publicView}
+              busy={deckAiBusy}
+              onBusyChange={setDeckAiBusy}
+              onApplyDeckAssist={handleApplyDeckAssist}
+              onAuthRequest={() => setAuthOpen(true)}
+            />
+          </div>
+        </div>
+      )}
+      </div>{/* end flex-row wrapper */}
+
       <EditorRightSidebar
         activePanel={editorSidebarPanel}
         onActivePanelChange={setEditorSidebarPanel}
@@ -1290,9 +1332,6 @@ export default function PresentationView({ id, publicView = false }) {
         onSendLocalSlideAi={handleSendLocalSlideAi}
         localAiBusy={localAiBusy}
         persistBusy={persistBusy}
-        deckAiBusy={deckAiBusy}
-        onDeckAssist={handleApplyDeckAssist}
-        onDeckAiBusyChange={setDeckAiBusy}
         onAuthRequest={() => setAuthOpen(true)}
         slidesLength={slides.length}
         overlayMode={sidebarOverlay}
@@ -2327,9 +2366,6 @@ function EditorRightSidebar({
   onSendLocalSlideAi,
   localAiBusy,
   persistBusy,
-  deckAiBusy,
-  onDeckAssist,
-  onDeckAiBusyChange,
   onAuthRequest,
   slidesLength,
   overlayMode,
@@ -2337,7 +2373,6 @@ function EditorRightSidebar({
 }) {
   const dock = [
     { id: "design", title: "Дизайн презентации", icon: "palette" },
-    ...(!publicView ? [{ id: "ai", title: "ИИ презентации", icon: "sparkles" }] : []),
     { id: "export", title: "Экспорт", icon: "download" },
   ];
 
@@ -2378,7 +2413,7 @@ function EditorRightSidebar({
     export: "Экспорт",
   };
 
-  const panelBusy = persistBusy || localAiBusy || deckAiBusy;
+  const panelBusy = persistBusy || localAiBusy;
 
   return (
     <>
@@ -2462,17 +2497,6 @@ function EditorRightSidebar({
                 onWatermarkModeChange={onWatermarkModeChange}
                 onReset={onReset}
                 hasOverrides={hasOverrides}
-              />
-            ) : null}
-            {activePanel === "ai" ? (
-              <EditorAiPanel
-                presentationTitle={presentationTitle}
-                presentationId={presentationId}
-                publicView={publicView}
-                busy={deckAiBusy}
-                onBusyChange={onDeckAiBusyChange}
-                onApplyDeckAssist={onDeckAssist}
-                onAuthRequest={onAuthRequest}
               />
             ) : null}
             {activePanel === "history" ? (
