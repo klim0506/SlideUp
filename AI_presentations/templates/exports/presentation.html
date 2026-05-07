@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      @page {
+        size: 13.33in 7.5in;
+        margin: 0;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        color: #{{ theme.text }};
+        background: #{{ theme.bg }};
+      }
+
+      .slide {
+        position: relative;
+        width: 13.33in;
+        height: 7.5in;
+        padding: 0.75in;
+        page-break-after: always;
+        background: #{{ theme.bg }};
+      }
+
+      .slide:last-child {
+        page-break-after: auto;
+      }
+
+      .title-slide {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+
+      h1 {
+        margin: 0 0 0.3in;
+        font-size: 42pt;
+        line-height: 1.08;
+      }
+
+      h2 {
+        margin: 0 0 0.45in;
+        font-size: 30pt;
+        line-height: 1.15;
+      }
+
+      .subtitle,
+      .accent {
+        color: #{{ theme.accent }};
+      }
+
+      ul {
+        margin: 0;
+        padding-left: 0.35in;
+        font-size: 21pt;
+        line-height: 1.35;
+      }
+
+      li {
+        margin-bottom: 0.16in;
+      }
+
+      .watermark {
+        position: absolute;
+        right: 0.35in;
+        bottom: 0.24in;
+        color: #9CA3AF;
+        font-size: 10pt;
+      }
+    </style>
+  </head>
+  <body>
+    {% for slide in slides %}
+      <section class="slide {% if slide.type == 'title' %}title-slide{% endif %}">
+        {% if slide.type == 'title' %}
+          <h1>{{ slide.title|default:presentation.title }}</h1>
+          {% if slide.render_subtitle %}
+            <div class="subtitle">{{ slide.render_subtitle }}</div>
+          {% endif %}
+        {% else %}
+          <h2>{{ slide.title|default:"Untitled" }}</h2>
+          <ul>
+            {% for bullet in slide.render_bullets %}
+              <li>{{ bullet }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        {% if watermark %}
+          <div class="watermark">slidegen.ru</div>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </body>
+</html>

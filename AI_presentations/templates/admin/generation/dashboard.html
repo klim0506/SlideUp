@@ -1,0 +1,143 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:24px;flex-wrap:wrap;margin-bottom:24px;">
+    <div>
+      <h1 style="margin:0 0 8px;">Generation Dashboard</h1>
+      <p style="margin:0;color:#666;">Управление режимом Claude и живая статистика генерации.</p>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      <a class="button" href="{{ settings_change_url }}">Edit generation settings</a>
+      <a class="button" href="{% url 'admin:generation_generationjob_changelist' %}">Open job log</a>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px;">
+    <div class="module" style="padding:16px;">
+      <div style="font-size:12px;color:#666;text-transform:uppercase;">Current mode</div>
+      <div style="font-size:28px;font-weight:700;margin-top:8px;">{{ settings_obj.claude_mode|upper }}</div>
+      <div style="margin-top:8px;font-size:12px;color:#666;">CLI command: {{ cli_command_preview }}</div>
+    </div>
+    <div class="module" style="padding:16px;">
+      <div style="font-size:12px;color:#666;text-transform:uppercase;">Total jobs</div>
+      <div style="font-size:28px;font-weight:700;margin-top:8px;">{{ summary.total|default:0 }}</div>
+    </div>
+    <div class="module" style="padding:16px;">
+      <div style="font-size:12px;color:#666;text-transform:uppercase;">Success rate</div>
+      <div style="font-size:28px;font-weight:700;margin-top:8px;">{{ success_rate }}%</div>
+    </div>
+    <div class="module" style="padding:16px;">
+      <div style="font-size:12px;color:#666;text-transform:uppercase;">Avg duration</div>
+      <div style="font-size:28px;font-weight:700;margin-top:8px;">{{ summary.avg_duration|default:0|floatformat:0 }} ms</div>
+    </div>
+    <div class="module" style="padding:16px;">
+      <div style="font-size:12px;color:#666;text-transform:uppercase;">Slides requested</div>
+      <div style="font-size:28px;font-weight:700;margin-top:8px;">{{ summary.total_slides|default:0 }}</div>
+    </div>
+    <div class="module" style="padding:16px;">
+      <div style="font-size:12px;color:#666;text-transform:uppercase;">Last 24h / 7d</div>
+      <div style="font-size:28px;font-weight:700;margin-top:8px;">{{ jobs_24h }} / {{ jobs_7d }}</div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:24px;">
+    <div class="module">
+      <h2>By mode</h2>
+      <table style="width:100%;">
+        <thead>
+          <tr><th style="text-align:left;">Mode</th><th style="text-align:right;">Jobs</th></tr>
+        </thead>
+        <tbody>
+          {% for row in by_mode %}
+          <tr><td>{{ row.claude_mode|upper }}</td><td style="text-align:right;">{{ row.total }}</td></tr>
+          {% empty %}
+          <tr><td colspan="2">No data yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="module">
+      <h2>By task</h2>
+      <table style="width:100%;">
+        <thead>
+          <tr><th style="text-align:left;">Task</th><th style="text-align:right;">Jobs</th></tr>
+        </thead>
+        <tbody>
+          {% for row in by_task %}
+          <tr><td>{{ row.task_type }}</td><td style="text-align:right;">{{ row.total }}</td></tr>
+          {% empty %}
+          <tr><td colspan="2">No data yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="module">
+      <h2>Status split</h2>
+      <table style="width:100%;">
+        <tbody>
+          <tr><th style="text-align:left;">Success</th><td style="text-align:right;">{{ summary.success|default:0 }}</td></tr>
+          <tr><th style="text-align:left;">Errors</th><td style="text-align:right;">{{ summary.errors|default:0 }}</td></tr>
+          <tr><th style="text-align:left;">Rejected</th><td style="text-align:right;">{{ summary.rejected|default:0 }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;">
+    <div class="module">
+      <h2>Recent jobs</h2>
+      <table style="width:100%;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">Created</th>
+            <th style="text-align:left;">Task</th>
+            <th style="text-align:left;">Mode</th>
+            <th style="text-align:left;">Status</th>
+            <th style="text-align:right;">ms</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for job in recent_jobs %}
+          <tr>
+            <td>{{ job.created_at|date:"Y-m-d H:i" }}</td>
+            <td>{{ job.task_type }}</td>
+            <td>{{ job.claude_mode|upper }}</td>
+            <td>{{ job.status }}</td>
+            <td style="text-align:right;">{{ job.duration_ms }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5">No jobs yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="module">
+      <h2>Recent failures</h2>
+      <table style="width:100%;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">Created</th>
+            <th style="text-align:left;">Status</th>
+            <th style="text-align:left;">Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for job in error_jobs %}
+          <tr>
+            <td>{{ job.created_at|date:"Y-m-d H:i" }}</td>
+            <td>{{ job.status }}</td>
+            <td>{{ job.error_message|default:"-"|truncatechars:140 }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="3">No failures yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

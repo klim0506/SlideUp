@@ -1,0 +1,22 @@
+{
+  "plans": {
+    "free": {
+      "monthly_slides": 30,
+      "pdf_exports_per_month": 1,
+      "base_style_presets": 2,
+      "max_slides_per_presentation": 8
+    },
+    "student": {
+      "monthly_slides": 150,
+      "pdf_exports_per_month": null,
+      "style_presets_total": 5,
+      "max_slides_per_presentation": 15
+    },
+    "pro": {
+      "monthly_slides": null,
+      "pdf_exports_per_month": null,
+      "style_presets_total": null,
+      "max_slides_per_presentation": null
+    }
+  }
+}

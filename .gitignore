@@ -1,0 +1,67 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Django / local runtime
+db.sqlite3
+*.sqlite3
+*.log
+*.err
+media/
+staticfiles/
+
+# Node / frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# Browser smoke / Playwright artifacts
+.playwright-mcp/
+browser-smoke/
+browser-smoke-profile*/
+playwright-report/
+test-results/
+
+# Generated screenshots and local captures
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Keep source assets trackable when intentionally added
+!AI_presentations/frontend/src/**/*.png
+!AI_presentations/frontend/src/**/*.jpg
+!AI_presentations/frontend/src/**/*.jpeg
+!AI_presentations/frontend/src/**/*.webp
+!AI_presentations/frontend/public/**/*.png
+!AI_presentations/frontend/public/**/*.jpg
+!AI_presentations/frontend/public/**/*.jpeg
+!AI_presentations/frontend/public/**/*.webp

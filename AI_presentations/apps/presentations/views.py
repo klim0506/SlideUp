@@ -1,0 +1,151 @@
+from django.conf import settings
+from django.shortcuts import get_object_or_404
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.billing.utils import is_pro_plan
+
+from .models import ColorScheme, Presentation
+from .serializers import (
+    ClaimPresentationSerializer,
+    ColorSchemeSerializer,
+    PresentationSerializer,
+    PresentationThemeSerializer,
+)
+
+
+class PresentationViewSet(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+    serializer_class = PresentationSerializer
+
+    def get_queryset(self):
+        if self.action == "retrieve":
+            return Presentation.objects.all()
+        if self.request.user.is_authenticated:
+            return Presentation.objects.filter(user=self.request.user).order_by("-created_at")
+        return Presentation.objects.none()
+
+    def get_permissions(self):
+        if self.action == "retrieve":
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
+
+    def _get_owned_presentation(self):
+        return get_object_or_404(Presentation, pk=self.kwargs["pk"], user=self.request.user)
+
+    def retrieve(self, request, *args, **kwargs):
+        presentation = self.get_object()
+        if presentation.is_public:
+            return Response(self.get_serializer(presentation).data)
+
+        if not request.user.is_authenticated or presentation.user_id != request.user.id:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(self.get_serializer(presentation).data)
+
+    def destroy(self, request, *args, **kwargs):
+        presentation = self._get_owned_presentation()
+        presentation.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"detail": 'Use POST /api/generate/ to create presentations.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    @action(detail=True, methods=["patch"], url_path="theme")
+    def update_theme(self, request, pk=None):
+        presentation = self._get_owned_presentation()
+        serializer = PresentationThemeSerializer(
+            presentation,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(self.get_serializer(presentation).data)
+
+    @action(detail=True, methods=["post"], url_path="share")
+    def share(self, request, pk=None):
+        presentation = self._get_owned_presentation()
+        if not is_pro_plan(request.user):
+            return Response(
+                {
+                    "detail": "Public sharing is available on the Pro plan.",
+                    "show_upsell": True,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not presentation.is_public:
+            presentation.is_public = True
+            presentation.save(update_fields=("is_public",))
+        public_url = f"{settings.FRONTEND_PUBLIC_URL.rstrip('/')}/p/{presentation.id}"
+        return Response(
+            {
+                "id": str(presentation.id),
+                "is_public": presentation.is_public,
+                "public_url": public_url,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ColorSchemeViewSet(viewsets.ModelViewSet):
+    serializer_class = ColorSchemeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return ColorScheme.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        if not is_pro_plan(self.request.user):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Создание цветовых схем доступно только на тарифе Pro.")
+        serializer.save(user=self.request.user)
+
+    def perform_update(self, serializer):
+        if not is_pro_plan(self.request.user):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Редактирование цветовых схем доступно только на тарифе Pro.")
+        serializer.save()
+
+
+class ClaimPresentationView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ClaimPresentationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        claimed_count = Presentation.objects.filter(
+            session_key=serializer.validated_data["session_key"],
+            user__isnull=True,
+        ).update(user=request.user)
+        return Response({"claimed": claimed_count}, status=status.HTTP_200_OK)
+
+
+class PublicStatsView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        presentations = Presentation.objects.all()
+        total_presentations = presentations.count()
+        total_slides = sum(
+            len(slides)
+            for slides in presentations.values_list("slides", flat=True)
+            if isinstance(slides, list)
+        )
+        public_presentations = presentations.filter(is_public=True).count()
+
+        return Response(
+            {
+                "total_presentations": total_presentations,
+                "total_slides": total_slides,
+                "public_presentations": public_presentations,
+            }
+        )
