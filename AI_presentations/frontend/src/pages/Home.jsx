@@ -256,17 +256,30 @@ function Hero({
   const activePresentationStyleName = (PRESENTATION_STYLES.find((s) => s.id === presentationStyle) || PRESENTATION_STYLES[0]).name;
 
   useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return undefined;
+    return () => {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
 
+  function toggleSpeechInput() {
+    if (speechListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
     const recognition = new SpeechRecognition();
     recognition.lang = "ru-RU";
     recognition.continuous = true;
     recognition.interimResults = true;
-
     recognition.onresult = (event) => {
       let chunk = "";
       for (let i = 0; i < event.results.length; i++) {
+        if (i > 0) chunk += " ";
         chunk += event.results[i][0].transcript;
       }
       const spoken = chunk.trim();
@@ -274,33 +287,13 @@ function Hero({
       const glue = base && spoken ? " " : "";
       setPrompt(base + glue + spoken);
     };
-
     recognition.onerror = () => {
-      setSpeechListening(false);
+      if (recognitionRef.current === recognition) setSpeechListening(false);
     };
-
     recognition.onend = () => {
-      setSpeechListening(false);
+      if (recognitionRef.current === recognition) setSpeechListening(false);
     };
-
     recognitionRef.current = recognition;
-    return () => {
-      try {
-        recognition.stop();
-      } catch {
-        /* ignore */
-      }
-      recognitionRef.current = null;
-    };
-  }, [setPrompt]);
-
-  function toggleSpeechInput() {
-    const recognition = recognitionRef.current;
-    if (!recognition) return;
-    if (speechListening) {
-      recognition.stop();
-      return;
-    }
     speechBaseRef.current = prompt;
     try {
       recognition.start();
