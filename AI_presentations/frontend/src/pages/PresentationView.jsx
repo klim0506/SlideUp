@@ -4420,12 +4420,12 @@ function SortableSlideItem({ id, slide, index, slidesLen, active: isActive, lock
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onSlideMenuChange(menuOpen ? null : index); }}
-            className="filmstrip-more-btn"
+            className={`filmstrip-more-btn${menuOpen ? " filmstrip-more-btn--open" : ""}`}
             style={{
               position: "absolute", top: 2, right: 2, width: 22, height: 22,
               borderRadius: 6, background: "rgba(255,255,255,.85)", border: "1px solid var(--line)",
               display: "grid", placeItems: "center", color: "var(--ink-3)",
-              cursor: "pointer", opacity: menuOpen ? 1 : 0, transition: "opacity .15s",
+              cursor: "pointer",
               zIndex: 5,
             }}
           >
@@ -4685,7 +4685,11 @@ function FloatingFormatToolbar({ accent = "var(--accent)" }) {
       setPos({ top: rect.top - 42, left: rect.left + rect.width / 2 });
     }
     document.addEventListener("selectionchange", check);
-    return () => document.removeEventListener("selectionchange", check);
+    document.addEventListener("mouseup", () => setTimeout(check, 10));
+    return () => {
+      document.removeEventListener("selectionchange", check);
+      document.removeEventListener("mouseup", () => setTimeout(check, 10));
+    };
   }, []);
   if (!pos) return null;
   return (

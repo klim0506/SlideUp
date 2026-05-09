@@ -130,6 +130,30 @@ export const Icon = ({ name, size = 16, stroke = 1.7, style, ...rest }) => {
           <path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z" />
         </svg>
       );
+    case "grip-vertical":
+      return (
+        <svg {...props}>
+          <circle cx="9" cy="5" r="1" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="5" r="1" fill="currentColor" stroke="none" />
+          <circle cx="9" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="9" cy="19" r="1" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="19" r="1" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "moon": return <svg {...props}><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>;
+    case "sun": return <svg {...props}><circle cx="12" cy="12" r="5" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" /></svg>;
+    case "more-vertical": return <svg {...props}><circle cx="12" cy="5" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none" /></svg>;
+    case "trash-2": return <svg {...props}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6" /></svg>;
+    case "rotate-cw":
+      return (
+        <svg {...props}>
+          <path d="M21 12a9 9 0 1 1-2.6-6.4L21 8" />
+          <path d="M21 3v5h-5" />
+        </svg>
+      );
+    case "loader": return <svg {...props} style={{ ...style, animation: "spin 1s linear infinite" }}><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" /></svg>;
+    case "alert-triangle": return <svg {...props}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>;
     default: return null;
   }
 };

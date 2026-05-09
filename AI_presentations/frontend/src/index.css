@@ -1637,6 +1637,7 @@ a { color: inherit; text-decoration: none; }
 }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .su-ai-typing-dot {
   width: 6px;
@@ -1784,14 +1785,24 @@ a { color: inherit; text-decoration: none; }
   opacity: 0;
   transition: opacity .15s;
 }
+.filmstrip-more-btn--open,
 .filmstrip-more-btn:hover,
-.filmstrip-more-btn:focus {
+.filmstrip-more-btn:focus-visible {
   opacity: 1 !important;
 }
-/* Show more-btn when parent slide row is hovered anywhere */
 @media (hover: hover) and (pointer: fine) {
-  *:has(> .filmstrip-more-btn):hover .filmstrip-more-btn {
+  button:hover > .filmstrip-more-btn,
+  button:hover .filmstrip-more-btn {
+    opacity: 0.7 !important;
+  }
+  button:hover > .filmstrip-more-btn:hover,
+  button:hover .filmstrip-more-btn:hover {
     opacity: 1 !important;
+  }
+}
+@media (hover: none) {
+  .filmstrip-more-btn {
+    opacity: 0.7;
   }
 }
 
