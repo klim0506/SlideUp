@@ -4385,8 +4385,8 @@ function SortableSlideItem({ id, slide, index, slidesLen, active: isActive, lock
   return (
     <div ref={setNodeRef} style={style}>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, paddingTop: 5 }}>
-        <span {...attributes} {...listeners} style={{ cursor: "grab", color: "var(--ink-4)", display: "flex", alignItems: "center" }}>
-          <Icon name="grip-vertical" size={12} stroke={2} />
+        <span {...attributes} {...listeners} style={{ cursor: "grab", color: "var(--ink-3)", display: "flex", alignItems: "center", opacity: 0.7, padding: "2px 0" }} title="Перетащить">
+          <Icon name="grip-vertical" size={14} stroke={2.2} />
         </span>
         <span style={{ width: 22, flexShrink: 0, textAlign: "right", fontSize: 12, fontFamily: "var(--font-mono)", fontWeight: 600, color: isActive ? accent : "var(--ink-4)", lineHeight: 1 }}>
           {index + 1}

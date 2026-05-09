@@ -1779,10 +1779,20 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* ── B1: Filmstrip more button hover reveal ── */
-.filmstrip-more-btn { pointer-events: auto; }
-button:hover > .filmstrip-more-btn,
-div:hover > button .filmstrip-more-btn {
+.filmstrip-more-btn {
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.filmstrip-more-btn:hover,
+.filmstrip-more-btn:focus {
   opacity: 1 !important;
+}
+/* Show more-btn when parent slide row is hovered anywhere */
+@media (hover: hover) and (pointer: fine) {
+  *:has(> .filmstrip-more-btn):hover .filmstrip-more-btn {
+    opacity: 1 !important;
+  }
 }
 
 /* ── A6: Mobile responsive ── */
