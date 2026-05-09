@@ -19,6 +19,11 @@ class Presentation(models.Model):
     theme = models.CharField(max_length=32, default="light")
     theme_custom = models.JSONField(null=True, blank=True)
     slides = models.JSONField(default=list, blank=True)
+    slides_unlocked = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Если задано — доступны только первые N слайдов (остальные превью до апгрейда); null — все.",
+    )
     slide_histories = models.JSONField(default=dict, blank=True)
     assets = models.JSONField(null=True, blank=True)
     is_public = models.BooleanField(default=False)

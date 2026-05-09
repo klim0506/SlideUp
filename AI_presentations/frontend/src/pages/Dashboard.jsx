@@ -55,7 +55,7 @@ export default function Dashboard() {
       setPresentations(Array.isArray(data) ? data : data.results || []);
     } catch (err) {
       if (err.status === 401) setAuthOpen(true);
-      else setError(err.message || "Не удалось загрузить презентации.");
+      else setError(err.message || "Список презентаций сейчас не загрузился — попробуйте обновить страницу.");
     } finally {
       setLoading(false);
     }
@@ -84,11 +84,11 @@ export default function Dashboard() {
       if (response.status === 403) {
         const data = await response.json().catch(() => ({}));
         if (data.show_upsell) setUpsellOpen(true);
-        setExportNotice(data.detail || "Экспорт недоступен на текущем плане");
+        setExportNotice(data.detail || "Экспорт на вашем тарифе пока недоступен — можно оформить подписку выше.");
         return;
       }
       if (!response.ok) {
-        setExportNotice("Не удалось подготовить файл");
+        setExportNotice("Файл не получилось подготовить — попробуйте ещё раз чуть позже.");
         return;
       }
       const blob = await response.blob();
@@ -100,7 +100,7 @@ export default function Dashboard() {
       link.click();
       window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
     } catch {
-      setExportNotice("Не удалось скачать файл. Попробуйте ещё раз.");
+      setExportNotice("Скачивание прервалось — проверьте сеть и попробуйте снова.");
     }
   }
 
@@ -122,14 +122,10 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {error ? (
-          <div style={{ padding: "14px 18px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "var(--r-md)", color: "#b91c1c", marginBottom: 20 }}>
-            {error}
-          </div>
-        ) : null}
+        {error ? <div className="su-user-hint" style={{ marginBottom: 20 }}>{error}</div> : null}
 
         {exportNotice ? (
-          <div style={{ padding: "14px 18px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "var(--r-md)", color: "#92400e", marginBottom: 20, fontSize: 14 }}>
+          <div className="su-user-hint" style={{ marginBottom: 20, background: "color-mix(in srgb, var(--accent) 6%, var(--surface))" }}>
             {exportNotice}
           </div>
         ) : null}
@@ -328,7 +324,7 @@ function DeckGrid({ decks, onOpen, onRequestDelete, onDownload }) {
           <div style={{ padding: "14px 18px 18px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
               <span
-                style={{ ...presentationStyleChip, flex: 1, minWidth: 0 }}
+                style={presentationStyleChip}
                 title={presentationStyleCaption(deck.theme)}
               >
                 {presentationStyleCaption(deck.theme)}
@@ -568,11 +564,13 @@ const iconButton = (active) => ({
 });
 
 const presentationStyleChip = {
-  padding: "6px 10px",
-  borderRadius: 999,
+  display: "inline-block",
+  maxWidth: 116,
+  padding: "4px 8px",
+  borderRadius: "var(--r-sm)",
   background: "var(--surface-2)",
   color: "var(--ink-2)",
-  fontSize: 11,
+  fontSize: 10.5,
   fontFamily: "var(--font-sans)",
   overflow: "hidden",
   textOverflow: "ellipsis",

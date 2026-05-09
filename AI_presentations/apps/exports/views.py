@@ -12,6 +12,21 @@ from .pdf_generator import generate_html, generate_pdf
 from .pptx_generator import generate_pptx
 
 
+def _slides_for_export(presentation):
+    """Return slides list truncated to billing-unlocked prefix when applicable."""
+    slides = presentation.slides if isinstance(presentation.slides, list) else []
+    cap = getattr(presentation, "slides_unlocked", None)
+    if cap is None:
+        return slides
+    try:
+        n = int(cap)
+    except (TypeError, ValueError):
+        return slides
+    if n < 1:
+        return slides
+    return slides[: min(n, len(slides))]
+
+
 def _presentation_data(presentation):
     """Return a dictionary payload suitable for export generators."""
     return {
@@ -19,7 +34,7 @@ def _presentation_data(presentation):
         "title": presentation.title,
         "theme": presentation.theme,
         "theme_custom": presentation.theme_custom,
-        "slides": presentation.slides,
+        "slides": _slides_for_export(presentation),
         "assets": presentation.assets,
     }
 

@@ -70,11 +70,14 @@ export async function apiFetch(path, options = {}) {
     });
   } catch (e) {
     const raw = String(e?.message || e || "");
-    const hint =
-      raw.includes("Failed to fetch") || raw.includes("NetworkError") || raw.includes("Load failed")
-        ? " Нет ответа от сервера: запустите Django (например http://127.0.0.1:8000), проверьте прокси Vite для /api или переменную VITE_API_BASE_URL."
-        : "";
-    const err = new Error(`${raw || "Ошибка сети"}${hint}`);
+    const isNet =
+      raw.includes("Failed to fetch") || raw.includes("NetworkError") || raw.includes("Load failed");
+    const msg = isNet
+      ? "Не получилось связаться с сервером. Проверьте интернет и попробуйте снова чуть позже."
+      : raw
+        ? "Сейчас запрос не прошёл. Попробуйте ещё раз через минуту."
+        : "Сеть недоступна. Попробуйте чуть позже.";
+    const err = new Error(msg);
     err.status = 0;
     err.data = {};
     throw err;
@@ -101,22 +104,66 @@ export async function apiFetch(path, options = {}) {
   return response;
 }
 
+/** Не показывать пользователю HTML-страницы ошибок Django / прокси. */
+function isLikelyHtmlErrorBody(text) {
+  const s = String(text || "").trimStart().slice(0, 500);
+  if (!s) return false;
+  if (/^<!DOCTYPE/i.test(s) || /^<html/i.test(s)) return true;
+  if (s.includes("<title>") && s.includes("</title>")) return true;
+  return false;
+}
+
+/** Убрать из ответа API слишком «технические» или длинные фразы для экрана пользователя. */
+function sanitizeServerMessage(text) {
+  if (typeof text !== "string") return "";
+  let t = text.trim();
+  if (!t) return "";
+  if (isLikelyHtmlErrorBody(t)) return "";
+  const low = t.toLowerCase();
+  if (
+    low.includes("operationalerror") ||
+    low.includes("integrityerror") ||
+    low.includes("traceback") ||
+    low.includes("django.db") ||
+    low.includes("internal server error") ||
+    low.includes("syntaxerror")
+  ) {
+    return "";
+  }
+  if (t.length > 200) t = `${t.slice(0, 197)}…`;
+  return t;
+}
+
+function messageForHttpStatus(status) {
+  if (status === 401) return "Нужно войти ещё раз или проверить email и пароль.";
+  if (status === 403) return "Это действие сейчас недоступно на вашем аккаунте.";
+  if (status === 404) return "Ничего не нашли — возможно, ссылка устарела или запись удалена.";
+  if (status === 408 || status === 504) return "Сервер долго не отвечал. Попробуйте снова через минуту.";
+  if (status === 429) return "Слишком частые запросы или лимит по тарифу. Подождите немного.";
+  if (status >= 500) return "Сервис временно не отвечает. Попробуйте чуть позже — обычно это быстро проходит.";
+  if (status >= 400) return "Запрос не выполнился. Если так повторится, напишите нам в поддержку.";
+  return "Что-то пошло не так. Попробуйте ещё раз.";
+}
+
 /** Извлечь человекочитаемое сообщение из тела ошибки DRF / Django. */
 function pickApiErrorMessage(data) {
   if (!data || typeof data !== "object") return "";
   const d = data.detail;
-  if (typeof d === "string" && d.trim()) return d.trim();
-  if (Array.isArray(d) && d.length) return String(d[0] ?? "").trim();
+  if (typeof d === "string" && d.trim()) {
+    const cleaned = sanitizeServerMessage(d);
+    return cleaned;
+  }
+  if (Array.isArray(d) && d.length) return sanitizeServerMessage(String(d[0] ?? ""));
   if (typeof d === "object" && d !== null && !Array.isArray(d)) {
     const key = Object.keys(d)[0];
     if (key) {
       const v = d[key];
-      if (Array.isArray(v) && v.length) return `${key}: ${v[0]}`;
-      if (typeof v === "string") return `${key}: ${v}`;
+      if (Array.isArray(v) && v.length) return sanitizeServerMessage(`${key}: ${v[0]}`);
+      if (typeof v === "string") return sanitizeServerMessage(`${key}: ${v}`);
     }
   }
   if (Array.isArray(data.non_field_errors) && data.non_field_errors.length) {
-    return String(data.non_field_errors[0]);
+    return sanitizeServerMessage(String(data.non_field_errors[0]));
   }
   return "";
 }
@@ -131,27 +178,24 @@ export async function apiJson(path, options = {}) {
       data = JSON.parse(rawText);
     } catch {
       if (response.ok) {
-        const err = new Error("Сервер вернул ответ, который не удалось разобрать как JSON.");
+        const err = new Error("Ответ сервера пришёл в неожиданном формате. Обновите страницу и попробуйте снова.");
         err.status = response.status;
         err.data = { raw: rawText.slice(0, 200) };
         throw err;
       }
-      const snippet = rawText.trim().slice(0, 400);
-      data = { detail: snippet || `Ошибка (HTTP ${response.status})` };
+      const trimmed = rawText.trim();
+      if (isLikelyHtmlErrorBody(trimmed)) {
+        data = { detail: "" };
+      } else {
+        const snippet = sanitizeServerMessage(trimmed.slice(0, 400));
+        data = { detail: snippet || "" };
+      }
     }
   }
 
   if (!response.ok) {
     const picked = pickApiErrorMessage(data);
-    const serverHint =
-      response.status >= 500
-        ? " Проверьте логи бэкенда; после обновления кода часто нужно: python manage.py migrate"
-        : "";
-    const message =
-      picked ||
-      (response.status
-        ? `Запрос не выполнен (HTTP ${response.status}).${serverHint}`
-        : "Не удалось выполнить запрос. Попробуйте позже.");
+    const message = picked || messageForHttpStatus(response.status);
     const error = new Error(message);
     error.status = response.status;
     error.data = data;

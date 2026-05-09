@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.billing.models import UsageLog
-from apps.billing.utils import check_and_spend_slides, increment_usage
+from apps.billing.utils import check_and_spend_slides, check_and_spend_slides_up_to, increment_usage
 from apps.presentations.models import Presentation
 from apps.presentations.themes import sanitize_generation_theme
 
@@ -27,6 +27,14 @@ SINGLE_SLIDE_SYSTEM_PROMPT = (
     "Edit exactly one slide according to the user's instruction. "
     "Return only valid JSON for one slide object. "
     "The slide must include type, title, bullets, and content fields."
+)
+
+NEW_SLIDE_SYSTEM_PROMPT = (
+    "You are Slidegen, an expert presentation architect. "
+    "Create exactly one NEW slide that fits the existing deck context and the user's instruction. "
+    "Return only valid JSON for one slide object, not a full deck. "
+    "The slide must include type, title, bullets, and content fields. "
+    "Do not include markdown fences, comments, or explanations."
 )
 
 DECK_ASSIST_SYSTEM_PROMPT = (
@@ -206,11 +214,12 @@ class GeneratePresentationView(APIView):
             topic = f'Презентация по материалам файла «{uploaded.name}».'
 
         user = request.user if _is_authenticated(request) else None
+        usage_check = None
         if user:
-            usage_check = check_and_spend_slides(
+            usage_check = check_and_spend_slides_up_to(
                 user,
                 action=UsageLog.Action.GENERATE,
-                slides_count=slides_count,
+                slides_requested=slides_count,
             )
             if not usage_check["allowed"]:
                 _finish_job(
@@ -244,13 +253,21 @@ class GeneratePresentationView(APIView):
         if image_sources:
             assets = {"images": image_sources}
 
+        deck_slides = data["slides"]
+        slides_unlocked = None
+        if user and usage_check:
+            spent = int(usage_check.get("spent") or 0)
+            if spent > 0 and spent < len(deck_slides):
+                slides_unlocked = spent
+
         presentation = Presentation.objects.create(
             user=user,
             session_key=session_key,
             title=data["title"],
             style=style,
             theme=theme,
-            slides=data["slides"],
+            slides=deck_slides,
+            slides_unlocked=slides_unlocked,
             assets=assets,
         )
 
@@ -258,7 +275,7 @@ class GeneratePresentationView(APIView):
             increment_usage(
                 user,
                 action=UsageLog.Action.GENERATE,
-                slides_spent=slides_count,
+                slides_spent=int(usage_check["spent"]),
                 presentation=presentation,
             )
 
@@ -268,16 +285,17 @@ class GeneratePresentationView(APIView):
             started_at=started_at,
         )
 
-        return Response(
-            {
-                "id": str(presentation.id),
-                "title": presentation.title,
-                "slides": presentation.slides,
-                "theme": presentation.theme,
-                "style": presentation.style,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        body = {
+            "id": str(presentation.id),
+            "title": presentation.title,
+            "slides": presentation.slides,
+            "theme": presentation.theme,
+            "style": presentation.style,
+            "slides_unlocked": presentation.slides_unlocked,
+        }
+        if user and usage_check and usage_check.get("capped"):
+            body["slides_billing_capped"] = True
+        return Response(body, status=status.HTTP_201_CREATED)
 
 
 class RefineSlideView(APIView):
@@ -401,6 +419,7 @@ class AssistDeckView(APIView):
         instruction = (request.data.get("instruction") or "").strip()
         presentation_title = (request.data.get("presentation_title") or "Presentation").strip()
         presentation_id = request.data.get("presentation_id")
+        mode = (request.data.get("mode") or "deck").strip()
         _ensure_session_key(request)
         job = _start_job(
             request=request,
@@ -453,6 +472,57 @@ class AssistDeckView(APIView):
             _strip_internal_slide_keys(s) if isinstance(s, dict) else s for s in slides
         ]
         slide_count = len(stripped_slides)
+
+        if mode == "append_slide":
+            user_prompt = (
+                f"Presentation title: {presentation_title}\n"
+                f"Instruction for the new slide: {instruction}\n"
+                "Create exactly ONE additional slide that should be appended after the current deck. "
+                "Use the current deck only as context; do not rewrite existing slides.\n"
+                f"Current deck JSON:\n"
+                f"{json.dumps({'title': presentation_title, 'slides': stripped_slides}, ensure_ascii=False)}"
+            )
+
+            try:
+                new_slide = _call_claude_with_json_retry(
+                    NEW_SLIDE_SYSTEM_PROMPT,
+                    user_prompt,
+                    lambda raw: _postprocess_refined_slide(raw, presentation_title),
+                )
+            except ValueError as exc:
+                _finish_job(
+                    job,
+                    status_value=GenerationJob.Status.ERROR,
+                    started_at=started_at,
+                    error_message=str(exc),
+                )
+                return Response(
+                    {"detail": str(exc)},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+
+            if user:
+                presentation = None
+                if presentation_id:
+                    presentation = Presentation.objects.filter(
+                        pk=presentation_id,
+                        user=user,
+                    ).first()
+                increment_usage(
+                    user,
+                    action=UsageLog.Action.REFINE,
+                    slides_spent=1,
+                    presentation=presentation,
+                )
+
+            _finish_job(
+                job,
+                status_value=GenerationJob.Status.SUCCESS,
+                started_at=started_at,
+            )
+
+            return Response({"slide": new_slide}, status=status.HTTP_200_OK)
+
         user_prompt = (
             f"Presentation title: {presentation_title}\n"
             f"Required slide count (unchanged): {slide_count}\n"

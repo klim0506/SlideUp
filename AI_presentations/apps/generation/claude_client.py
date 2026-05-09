@@ -1,9 +1,14 @@
+import logging
+import os
 import shlex
+import shutil
 import subprocess
 
 from django.conf import settings
 
 from .models import GenerationSettings
+
+logger = logging.getLogger(__name__)
 
 
 CLAUDE_MODEL = "claude-sonnet-4-5"
@@ -19,7 +24,10 @@ def get_generation_settings() -> GenerationSettings:
 
 
 def get_claude_mode() -> str:
-    """Return the configured Claude mode from the singleton admin setting."""
+    """Return api/cli: env GENERATION_CLAUDE_MODE overrides admin Generation settings."""
+    override = (getattr(settings, "GENERATION_CLAUDE_MODE", "") or "").strip().lower()
+    if override in (GenerationSettings.ClaudeMode.API, GenerationSettings.ClaudeMode.CLI):
+        return override
     return get_generation_settings().claude_mode
 
 
@@ -34,9 +42,34 @@ def _build_cli_prompt(system_prompt: str, user_prompt: str, image_sources=None) 
     return prompt
 
 
+def _anthropic_api_key() -> str:
+    return (getattr(settings, "ANTHROPIC_API_KEY", "") or "").strip()
+
+
+def _split_cli_command(cli_command: str | None) -> list[str]:
+    """Split admin «cli command» into argv tokens (same rules as the shell on this OS)."""
+    cmd = (cli_command or "claude").strip()
+    if not cmd:
+        return ["claude"]
+    # On Windows, posix=True treats backslashes in paths as escapes (breaks C:\\foo\\bar.exe).
+    return shlex.split(cmd, posix=os.name != "nt")
+
+
+def _cli_argv0_exists(cli_command: str | None) -> bool:
+    """Return True if the first token of cli_command exists as an executable (PATH or absolute path)."""
+    parts = _split_cli_command(cli_command)
+    if not parts:
+        return False
+    argv0 = parts[0]
+    if os.path.isabs(argv0):
+        return os.path.isfile(argv0) and os.access(argv0, os.X_OK)
+    return shutil.which(argv0) is not None
+
+
 def _build_cli_command(settings_obj: GenerationSettings, system_prompt: str, user_prompt: str) -> list[str]:
     """Build the concrete Claude CLI command line from admin settings."""
-    args = [settings_obj.cli_command or "claude", "-p"]
+    args = list(_split_cli_command(settings_obj.cli_command))
+    args.append("-p")
     if settings_obj.cli_model:
         args.extend(["--model", settings_obj.cli_model])
     if settings_obj.cli_disable_tools:
@@ -46,7 +79,7 @@ def _build_cli_command(settings_obj: GenerationSettings, system_prompt: str, use
     if system_prompt:
         args.extend(["--system-prompt", system_prompt])
     if settings_obj.cli_extra_args.strip():
-        args.extend(shlex.split(settings_obj.cli_extra_args))
+        args.extend(shlex.split(settings_obj.cli_extra_args, posix=os.name != "nt"))
     args.append(user_prompt)
     return args
 
@@ -93,7 +126,13 @@ def _call_claude_api(system_prompt: str, user_prompt: str, image_sources=None) -
     """Call Claude through the Anthropic SDK and return the first text block."""
     from anthropic import Anthropic
 
-    client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    api_key = _anthropic_api_key()
+    if not api_key:
+        raise ValueError(
+            "Не задан ключ Anthropic: добавьте переменную окружения ANTHROPIC_API_KEY для бэкенда."
+        )
+
+    client = Anthropic(api_key=api_key)
     content: list = []
     if image_sources:
         for img in image_sources:
@@ -125,6 +164,22 @@ def _call_claude_api(system_prompt: str, user_prompt: str, image_sources=None) -
 def call_claude(system_prompt, user_prompt, image_sources=None) -> str:
     """Call Claude in the configured mode and return the generated text response."""
     mode = get_claude_mode()
+    settings_obj = get_generation_settings()
     if mode == GenerationSettings.ClaudeMode.CLI:
-        return _call_claude_cli(system_prompt, user_prompt, image_sources)
+        if _cli_argv0_exists(settings_obj.cli_command):
+            return _call_claude_cli(system_prompt, user_prompt, image_sources)
+        strict = getattr(settings, "GENERATION_CLI_STRICT", False)
+        if _anthropic_api_key() and not strict:
+            logger.warning(
+                "Claude CLI (%r) недоступен в PATH — выполняется запрос через Anthropic API.",
+                (settings_obj.cli_command or "claude").strip(),
+            )
+            return _call_claude_api(system_prompt, user_prompt, image_sources)
+        raise ValueError(
+            "В режиме CLI не найден исполняемый файл Claude Code (команда «"
+            + (settings_obj.cli_command or "claude")
+            + "»). В Docker установите CLI в образ или смонтируйте бинарник, "
+            "укажите полный путь в Generation settings → cli command, либо задайте "
+            "ANTHROPIC_API_KEY — тогда запрос уйдёт через API."
+        )
     return _call_claude_api(system_prompt, user_prompt, image_sources)

@@ -65,7 +65,7 @@ export default function Generating() {
       navigate(`/presentation/${data.id}`);
     } catch (err) {
       clearInterval(timer);
-      setError(err.message || "Не удалось создать презентацию. Попробуйте ещё раз.");
+      setError(err.message || "Пока не получилось создать презентацию — загляните чуть позже или попробуйте снова.");
     }
   }
 
@@ -80,11 +80,11 @@ export default function Generating() {
 
       {error ? (
         <div style={{ textAlign: "center", maxWidth: 460 }}>
-          <div style={{ width: 56, height: 56, borderRadius: 999, background: "#fef2f2", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
-            <Icon name="x" size={24} style={{ color: "#ef4444" }} />
+          <div style={{ width: 56, height: 56, borderRadius: 999, background: "var(--accent-soft)", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
+            <Icon name="x" size={24} style={{ color: "var(--ink-3)" }} />
           </div>
-          <h2 style={{ fontSize: 26, fontWeight: 760, letterSpacing: "-0.03em", marginBottom: 12 }}>Генерация остановилась</h2>
-          <p style={{ color: "var(--ink-3)", fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>{error}</p>
+          <h2 style={{ fontSize: 26, fontWeight: 760, letterSpacing: "-0.03em", marginBottom: 12 }}>Пока не получилось</h2>
+          <p style={{ color: "var(--ink-2)", fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>{error}</p>
           <button onClick={() => navigate("/")} className="su-btn su-btn-primary" style={{ padding: "12px 24px" }}>
             Вернуться и попробовать снова
           </button>

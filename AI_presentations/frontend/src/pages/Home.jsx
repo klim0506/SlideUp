@@ -11,7 +11,7 @@ import { getMe, logout, navigate, apiJson } from "@/lib/api";
 const HERO_AUDIENCES = ["дизайнеры", "предприниматели", "менеджеры", "студенты", "компании"];
 
 /** Допустимые типы вложения для окна выбора файла (совместимо с обработкой на сервере и Claude). */
-const HERO_SOURCE_ACCEPT =
+export const HERO_SOURCE_ACCEPT =
   ".pdf,.doc,.docx,.txt,.ppt,.pptx,.jpg,.jpeg,.png,.webp,.gif,.bmp,.heic,.heif,.avif,image/*";
 
 const MAX_SLIDES_LOGGED_IN = 20;
@@ -19,7 +19,7 @@ const MAX_SLIDES_LOGGED_IN = 20;
 const MAX_SLIDES_GUEST = 7;
 
 /** Для «Создать»: больше 3 символов после trim (то есть минимум 4). */
-function isHeroPromptValid(prompt) {
+export function isHeroPromptValid(prompt) {
   return prompt.trim().length > 3;
 }
 
@@ -63,7 +63,7 @@ export default function Home({ workspaceMode = false }) {
   async function handleCreate(options = {}) {
     setCreateErr("");
     if (!isHeroPromptValid(prompt)) {
-      setCreateErr("Опишите презентацию: не меньше 4 символов без пробелов в начале и в конце.");
+      setCreateErr("Расскажите тему чуть подробнее — от 4 символов без лишних пробелов по краям.");
       document.querySelector(".hero-composer")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
@@ -83,7 +83,7 @@ export default function Home({ workspaceMode = false }) {
         sessionStorage.removeItem("genConfig");
         navigate(`/presentation/${data.id}`);
       } catch (e) {
-        setCreateErr(e?.message || "Не удалось создать презентацию. Попробуйте ещё раз.");
+        setCreateErr(e?.message || "Презентация не создалась — можно попробовать ещё раз чуть позже.");
       } finally {
         setCreateBusy(false);
       }
@@ -391,11 +391,7 @@ function Hero({
                   </button>
                 </div>
               </div>
-              {createErr ? (
-                <div style={{ marginTop: 10, marginInline: 6, fontSize: 13, color: "#b91c1c", lineHeight: 1.45 }}>
-                  {createErr}
-                </div>
-              ) : null}
+              {createErr ? <div className="su-user-hint" style={{ marginTop: 10, marginInline: 6 }}>{createErr}</div> : null}
             </div>
           </div>
         </div>
@@ -499,11 +495,7 @@ function Hero({
             </button>
           </div>
         </div>
-        {createErr ? (
-          <div style={{ marginTop: 10, marginInline: 6, fontSize: 13, color: "#b91c1c", lineHeight: 1.45 }}>
-            {createErr}
-          </div>
-        ) : null}
+        {createErr ? <div className="su-user-hint" style={{ marginTop: 10, marginInline: 6 }}>{createErr}</div> : null}
       </div>
 
       <div className="hero-preview-wrap"><HeroPreview /></div>
@@ -511,7 +503,7 @@ function Hero({
   );
 }
 
-function StylePicker({ value, onChange, userPlan = "free", onLockedPreset }) {
+export function StylePicker({ value, onChange, userPlan = "free", onLockedPreset }) {
   const [open, setOpen] = useState(false);
   const [hoveredPresetId, setHoveredPresetId] = useState(null);
   const pickerRef = useRef(null);
@@ -650,7 +642,7 @@ function PresentationStylePicker({ value, onChange }) {
         onClick={() => setOpen((p) => !p)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label={`Стиль презентации: ${selected.name}`}
+        aria-label={`${selected.name}`}
         className="hero-action-picker-btn"
         style={{ minWidth: 110 }}
       >
@@ -701,7 +693,7 @@ function PresentationStylePicker({ value, onChange }) {
 }
 
 /** 1 слайд, 2–4 слайда, 5+ слайдов; 11–14 слайдов; 21 слайд, 22 слайда… */
-function slidesDeclension(n) {
+export function slidesDeclension(n) {
   const k = Math.abs(Math.trunc(Number(n))) || 0;
   const mod100 = k % 100;
   const mod10 = k % 10;
@@ -711,7 +703,7 @@ function slidesDeclension(n) {
   return "слайдов";
 }
 
-function Stepper({ count, setCount, isLoggedIn, onRequestMoreSlidesLogin }) {
+export function Stepper({ count, setCount, isLoggedIn, onRequestMoreSlidesLogin }) {
   function increment() {
     if (count >= MAX_SLIDES_LOGGED_IN) return;
     const next = count + 1;

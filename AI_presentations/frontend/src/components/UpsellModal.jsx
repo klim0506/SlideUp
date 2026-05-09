@@ -51,7 +51,7 @@ function UpsellModal({ open, onClose }) {
       });
       window.location.href = data.confirmation_url;
     } catch (err) {
-      setError(err.message || "Не удалось создать платёж.");
+      setError(err.message || "Платёж сейчас не создался — попробуйте чуть позже.");
       setLoadingOffer("");
     }
   }
@@ -142,7 +142,7 @@ function UpsellModal({ open, onClose }) {
           </div>
         </div>
 
-        {error ? <p style={{ margin: "14px 0 0", color: "#b91c1c", fontSize: 13 }}>{error}</p> : null}
+        {error ? <p className="su-user-hint" style={{ margin: "14px 0 0" }}>{error}</p> : null}
       </div>
     </div>
   );
