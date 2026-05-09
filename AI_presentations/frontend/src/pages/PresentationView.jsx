@@ -3017,11 +3017,15 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
   const [promptMode, setPromptMode] = useState(DECK_AI_MODE_DECK);
   const [docFile, setDocFile] = useState(null);
   const [speechListening, setSpeechListening] = useState(false);
+  const [messages, setMessages] = useState(() => [
+    { role: "assistant", text: "Напишите, что поменять во всей презентации — или выберите подсказку снизу." },
+  ]);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
   const speechBaseRef = useRef("");
   const promptHistoryRef = useRef({ entries: [""], index: 0 });
+  const messagesEndRef = useRef(null);
 
   const speechSupported =
     typeof window !== "undefined" &&
@@ -3058,6 +3062,10 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
       recognitionRef.current = null;
     };
   }, [speechSupported]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, busy]);
 
   function toggleSpeechInput() {
     const recognition = recognitionRef.current;
@@ -3113,12 +3121,22 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
       return;
     }
 
+    setMessages((m) => [...m, { role: "user", text: trimmed }]);
+    setPrompt("");
+    pushPromptHistory("");
+    setPromptMode(DECK_AI_MODE_DECK);
+
     onBusyChange(true);
+    const t0 = performance.now();
     try {
       await onApplyDeckAssist(trimmed, { mode: promptMode });
-      setPrompt("");
-      pushPromptHistory("");
-      setPromptMode(DECK_AI_MODE_DECK);
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+      setMessages((m) => [...m, { role: "assistant", text: `✶ Готово · ${elapsed}с`, done: true }]);
+    } catch (err) {
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", text: err.message || "Не удалось применить изменения.", error: true },
+      ]);
     } finally {
       onBusyChange(false);
     }
@@ -3131,49 +3149,128 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
         margin: 0,
         width: "100%",
         maxWidth: "none",
-        padding: 12,
+        padding: 0,
         display: "flex",
         flexDirection: "column",
         flex: 1,
         minHeight: 0,
+        overflow: "hidden",
         boxShadow: "0 1px 2px rgba(32,33,36,.04), 0 8px 22px rgba(32,33,36,.06)",
       }}
     >
-      <div style={{ padding: "2px 2px 10px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <Icon name="sparkles" size={16} stroke={2} style={{ color: "var(--accent)" }} />
-          <div style={{ fontSize: 14, fontWeight: 750, color: "var(--ink)", letterSpacing: "-0.015em" }}>
-            Работа с ИИ
-          </div>
-        </div>
-        <div style={{ fontSize: 12, lineHeight: 1.35, color: "var(--ink-3)" }}>
-          Напишите, что поменять в презентации, или выберите быстрый сценарий.
-        </div>
-      </div>
-
+      {/* ── AI Panel header ── */}
       <div
         style={{
-          marginTop: "auto",
           flexShrink: 0,
-          borderTop: "1px solid color-mix(in srgb, var(--line) 78%, transparent)",
-          padding: "10px 0 0",
-          border: "none",
-          borderRadius: 0,
-          background: "transparent",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "14px 16px 12px",
+          borderBottom: "1px solid var(--line)",
+        }}
+      >
+        <Icon name="sparkles" size={15} stroke={2} style={{ color: "var(--accent)", flexShrink: 0 }} />
+        <span style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)", letterSpacing: "-0.015em", flex: 1 }}>
+          SlideUp AI
+        </span>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            color: busy ? "var(--accent)" : "#16a34a",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: busy ? "var(--accent)" : "#16a34a",
+              display: "inline-block",
+              flexShrink: 0,
+              animation: busy ? "pulse 1s linear infinite" : "none",
+            }}
+          />
+          {busy ? "думает..." : "готов"}
+        </span>
+      </div>
+
+      {/* ── Message history ── */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          padding: "12px 14px",
           display: "flex",
           flexDirection: "column",
           gap: 10,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            gap: 6,
-            overflow: "hidden",
-          }}
-        >
+        {messages.map((msg, i) => (
+          <div
+            key={`${msg.role}-${i}`}
+            style={{
+              alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
+              maxWidth: "88%",
+              minWidth: 0,
+            }}
+          >
+            {msg.role === "user" ? (
+              <div
+                style={{
+                  padding: "9px 13px",
+                  borderRadius: "14px 14px 4px 14px",
+                  background: "var(--accent)",
+                  color: "var(--accent-fg)",
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                {msg.text}
+              </div>
+            ) : (
+              <div
+                style={{
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                  color: msg.done ? "var(--ink-2)" : msg.error ? "#b91c1c" : "var(--ink-3)",
+                  fontWeight: msg.done ? 600 : 400,
+                  padding: "2px 0",
+                }}
+              >
+                {msg.text}
+              </div>
+            )}
+          </div>
+        ))}
+        {busy ? (
+          <div style={{ alignSelf: "flex-start", display: "flex", gap: 4, padding: "6px 2px" }}>
+            <span className="su-ai-typing-dot" />
+            <span className="su-ai-typing-dot" />
+            <span className="su-ai-typing-dot" />
+          </div>
+        ) : null}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* ── Bottom composer ── */}
+      <div
+        style={{
+          flexShrink: 0,
+          borderTop: "1px solid var(--line)",
+          padding: "10px 12px 12px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          background: "rgba(255,255,255,.98)",
+        }}
+      >
+        {/* Quick-action chips */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
           {DECK_AI_PROMPTS.map((item) => (
             <button
               key={item.id}
@@ -3181,19 +3278,16 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
               disabled={busy}
               onClick={() => applyPromptTemplate(item.prompt, item.mode || DECK_AI_MODE_DECK)}
               style={{
-                padding: "6px 9px",
-                borderRadius: "var(--r-md)",
+                padding: "5px 10px",
+                borderRadius: 999,
                 border: "1px solid var(--line)",
-                background: "rgba(255,255,255,.72)",
+                background: "var(--surface-2)",
                 fontSize: 11.5,
-                lineHeight: 1.2,
                 color: "var(--ink-2)",
                 cursor: busy ? "not-allowed" : "pointer",
                 opacity: busy ? 0.55 : 1,
-                flex: "1 1 calc(50% - 6px)",
-                minWidth: 0,
-                textAlign: "center",
-                whiteSpace: "normal",
+                whiteSpace: "nowrap",
+                transition: "border-color 0.15s, background 0.15s, color 0.15s",
               }}
             >
               {item.label}
@@ -3201,6 +3295,7 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
           ))}
         </div>
 
+        {/* Textarea */}
         <textarea
           ref={textareaRef}
           value={prompt}
@@ -3245,15 +3340,15 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
           }}
           placeholder="Напишите, что изменить в презентации..."
           className="hero-textarea"
-          rows={7}
+          rows={3}
           disabled={busy}
           style={{
-            minHeight: 168,
-            padding: "12px 14px",
-            borderLeft: "none",
-            borderRadius: 0,
-            background: "color-mix(in srgb, var(--surface-2) 28%, var(--surface))",
-            fontSize: 14,
+            minHeight: 72,
+            padding: "10px 12px",
+            border: "1px solid var(--line)",
+            borderRadius: "var(--r-md)",
+            background: "var(--surface)",
+            fontSize: 13,
             lineHeight: 1.45,
           }}
         />
@@ -3262,21 +3357,15 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--accent-soft)", borderRadius: "var(--r-md)", fontSize: 12 }}>
             <Icon name="paperclip" size={13} style={{ color: "var(--accent)" }} />
             <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-2)" }}>{docFile.name}</span>
-            <button type="button" onClick={() => setDocFile(null)} style={{ color: "var(--ink-3)" }} aria-label="Убрать файл">
+            <button type="button" onClick={() => setDocFile(null)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--ink-3)", padding: 0 }} aria-label="Убрать файл">
               <Icon name="x" size={12} />
             </button>
           </div>
         ) : null}
 
-        <div className="hero-controls" style={{ padding: "2px 0 0", gap: 10 }}>
+        {/* Controls row */}
+        <div className="hero-controls" style={{ padding: "2px 0 0", gap: 8 }}>
           <div className="hero-controls-start">
-            {busy ? (
-              <span aria-label="ИИ применяет изменения" style={{ display: "inline-flex", alignItems: "center", gap: 4, paddingInline: 6 }}>
-                <span className="su-ai-typing-dot" />
-                <span className="su-ai-typing-dot" />
-                <span className="su-ai-typing-dot" />
-              </span>
-            ) : null}
             {speechSupported ? (
               <button
                 type="button"
@@ -3287,7 +3376,7 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
                 onClick={toggleSpeechInput}
                 disabled={busy}
               >
-                <Icon name="mic" size={18} stroke={2} />
+                <Icon name="mic" size={16} stroke={2} />
                 <span className="hero-icon-tooltip__bubble" role="tooltip">
                   {speechListening ? "Стоп" : "Голос в текст"}
                 </span>
@@ -3300,7 +3389,7 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
               onClick={() => fileInputRef.current?.click()}
               disabled={busy}
             >
-              <Icon name="paperclip" size={18} stroke={2} />
+              <Icon name="paperclip" size={16} stroke={2} />
               <span className="hero-icon-tooltip__bubble" role="tooltip">
                 PDF, Word, PPTX, фото
               </span>
@@ -3313,21 +3402,27 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
               onChange={(event) => setDocFile(event.target.files?.[0] ?? null)}
             />
           </div>
-          <button
-            type="button"
-            className="su-btn su-btn-accent"
-            disabled={busy || !prompt.trim()}
-            onClick={() => void submitPrompt()}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 13,
-            }}
-          >
-            {busy ? "Применяем..." : "Отправить"}
-            <Icon name="arrow-right" size={15} stroke={2} />
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {prompt.trim() && !busy ? (
+              <span style={{ fontSize: 11, color: "var(--ink-4)", flexShrink: 0, letterSpacing: 0 }}>⌘↵</span>
+            ) : null}
+            <button
+              type="button"
+              className="su-btn su-btn-accent"
+              disabled={busy || !prompt.trim()}
+              onClick={() => void submitPrompt()}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 13,
+                padding: "8px 14px",
+              }}
+            >
+              {busy ? "Применяем..." : "Отправить"}
+              {!busy ? <Icon name="arrow-right" size={14} stroke={2} /> : null}
+            </button>
+          </div>
         </div>
       </div>
     </div>
