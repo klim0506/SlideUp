@@ -3330,10 +3330,22 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
     !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
   useEffect(() => {
-    if (!speechSupported) return undefined;
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return undefined;
+    return () => {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
 
+  function toggleSpeechInput() {
+    if (speechListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
     const recognition = new SpeechRecognition();
     recognition.lang = "ru-RU";
     recognition.continuous = true;
@@ -3341,6 +3353,7 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
     recognition.onresult = (event) => {
       let chunk = "";
       for (let i = 0; i < event.results.length; i++) {
+        if (i > 0) chunk += " ";
         chunk += event.results[i][0].transcript;
       }
       const spoken = chunk.trim();
@@ -3348,26 +3361,13 @@ function DeckAiComposer({ presentationTitle: _presentationTitle, presentationId:
       const glue = base && spoken ? " " : "";
       setPrompt(base + glue + spoken);
     };
-    recognition.onerror = () => setSpeechListening(false);
-    recognition.onend = () => setSpeechListening(false);
-    recognitionRef.current = recognition;
-    return () => {
-      try {
-        recognition.stop();
-      } catch {
-        /* ignore */
-      }
-      recognitionRef.current = null;
+    recognition.onerror = () => {
+      if (recognitionRef.current === recognition) setSpeechListening(false);
     };
-  }, [speechSupported]);
-
-  function toggleSpeechInput() {
-    const recognition = recognitionRef.current;
-    if (!recognition) return;
-    if (speechListening) {
-      recognition.stop();
-      return;
-    }
+    recognition.onend = () => {
+      if (recognitionRef.current === recognition) setSpeechListening(false);
+    };
+    recognitionRef.current = recognition;
     speechBaseRef.current = prompt;
     try {
       recognition.start();
@@ -5085,9 +5085,13 @@ const SLIDE_FILMSTRIP_WIDTH = 296;
 const SLIDE_FILMSTRIP_THUMB_RADIUS = 10;
 
 /** A1: Sortable slide item for the filmstrip. */
-function SortableSlideItem({ id, slide, index, slidesLen, active: isActive, locked, accent, preset, fontScale, pageNumberMode, watermarkMode, slideWidth, slideHeight, onSlideSelect, onDeleteSlide, onDuplicateSlide, slideMenuIndex, onSlideMenuChange }) {
+function SortableSlideItem({ id, slide, index, slidesLen, active: isActive, locked, accent, preset, fontScale, pageNumberMode, watermarkMode, slideWidth, slideHeight, onSlideSelect, onDeleteSlide, onDuplicateSlide, slideMenuIndex, onSlideMenuChange, rowRef }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const [menuAnchorPos, setMenuAnchorPos] = useState(null);
+  const combinedRef = useCallback((node) => {
+    setNodeRef(node);
+    if (rowRef) rowRef.current = node;
+  }, [setNodeRef, rowRef]);
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -5103,12 +5107,12 @@ function SortableSlideItem({ id, slide, index, slidesLen, active: isActive, lock
     if (!menuOpen) setMenuAnchorPos(null);
   }, [menuOpen]);
   return (
-    <div ref={setNodeRef} style={style}>
+    <div ref={combinedRef} style={style}>
       <div style={{ width: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, paddingTop: "var(--presentation-filmstrip-number-pad-top, 58px)" }}>
-        <span style={{ cursor: "grab", color: "var(--ink-3)", display: "none", alignItems: "center", opacity: 0.7, padding: "2px 0" }} title="Перетащить">
+        <span {...attributes} {...listeners} style={{ cursor: "grab", color: "var(--ink-3)", display: "flex", alignItems: "center", opacity: 0.7, padding: "2px 0" }} title="Перетащить">
           <Icon name="grip-vertical" size={14} stroke={2.2} />
         </span>
-        <span {...attributes} {...listeners} style={{ width: 20, flexShrink: 0, textAlign: "center", fontSize: 14, fontFamily: "var(--font-mono)", fontWeight: 650, color: isActive ? accent : "var(--ink-3)", lineHeight: 1, cursor: "grab" }}>
+        <span style={{ width: 20, flexShrink: 0, textAlign: "center", fontSize: 14, fontFamily: "var(--font-mono)", fontWeight: 650, color: isActive ? accent : "var(--ink-3)", lineHeight: 1 }}>
           {index + 1}
         </span>
       </div>
@@ -5274,7 +5278,7 @@ function SlideFilmstripSidebar({
   const navDisabled = unlockedSlideCount <= 1;
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const slideIds = useMemo(() => slides.map((_, i) => `filmstrip-slide-${i}`), [slides.length]);
+  const slideIds = useMemo(() => slides.map((s, i) => s?.[SLIDE_SID_KEY] ?? `filmstrip-slide-${i}`), [slides]);
 
   function handleDragEnd(event) {
     const { active, over } = event;
@@ -5310,6 +5314,7 @@ function SlideFilmstripSidebar({
             onDuplicateSlide={onDuplicateSlide}
             slideMenuIndex={slideMenuIndex}
             onSlideMenuChange={onSlideMenuChange}
+            rowRef={active ? activeRowRef : null}
           />
         );
       })}

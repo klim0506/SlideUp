@@ -278,6 +278,16 @@ export function LandingHeroComposer({
   }, [submitBusy]);
 
   useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!showSpeech) return undefined;
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return undefined;
