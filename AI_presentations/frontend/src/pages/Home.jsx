@@ -17,6 +17,8 @@ export const HERO_SOURCE_ACCEPT =
 const MAX_SLIDES_LOGGED_IN = 20;
 /** Без аккаунта можно выбрать до 7 слайдов; 8+ — после входа. */
 const MAX_SLIDES_GUEST = 7;
+const HERO_DRAFT_STORAGE_KEY = "heroDraft";
+let heroDraftMemory = null;
 
 /** Для «Создать»: больше 3 символов после trim (то есть минимум 4). */
 export function isHeroPromptValid(prompt) {
@@ -37,12 +39,64 @@ export default function Home({ workspaceMode = false }) {
   const [createErr, setCreateErr] = useState("");
   const fileInputRef = useRef(null);
   const [upsellOpen, setUpsellOpen] = useState(false);
+  const draftHydratedRef = useRef(false);
 
   const prevUserRef = useRef(user);
 
   useEffect(() => {
     getMe().then(setUser).catch(() => setUser(null));
   }, []);
+
+  useEffect(() => {
+    const memoryDraft = heroDraftMemory;
+    if (memoryDraft) {
+      setPrompt(memoryDraft.prompt || "");
+      setSlideCount(memoryDraft.slideCount || 5);
+      setStyleId(memoryDraft.styleId || "light");
+      setPresentationStyle(memoryDraft.presentationStyle || "pitch");
+      setDocFile(memoryDraft.docFile || null);
+      draftHydratedRef.current = true;
+      return;
+    }
+
+    const raw = sessionStorage.getItem(HERO_DRAFT_STORAGE_KEY);
+    if (!raw) {
+      draftHydratedRef.current = true;
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      setPrompt(parsed.prompt || "");
+      setSlideCount(parsed.slideCount || 5);
+      setStyleId(parsed.styleId || "light");
+      setPresentationStyle(parsed.presentationStyle || "pitch");
+    } catch {
+      sessionStorage.removeItem(HERO_DRAFT_STORAGE_KEY);
+    } finally {
+      draftHydratedRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!draftHydratedRef.current) return;
+    const draft = {
+      prompt,
+      slideCount,
+      styleId,
+      presentationStyle,
+      docFile,
+    };
+    heroDraftMemory = draft;
+    sessionStorage.setItem(
+      HERO_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        prompt,
+        slideCount,
+        styleId,
+        presentationStyle,
+      }),
+    );
+  }, [prompt, slideCount, styleId, presentationStyle, docFile]);
 
   useEffect(() => {
     const wasLoggedIn = prevUserRef.current != null;

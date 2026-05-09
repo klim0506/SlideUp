@@ -834,6 +834,7 @@ function ExistingPresentationView({ id, publicView = false }) {
   );
 
   const inlineEditTimeoutRef = useRef(null);
+  const versionKeyboardChronoRef = useRef(null);
 
   const handleRestoreCurrentSlide = useCallback(
     (chronoIdx) => {
@@ -992,21 +993,42 @@ function ExistingPresentationView({ id, publicView = false }) {
     [lastUnlockedSlideIndex, currentSlide, flushEditedSlideVersion],
   );
 
+  const moveVersionByKeyboard = useCallback(
+    (delta) => {
+      if (publicView || persistBusy) return;
+      const maxIdx = currentSlideVersionsChrono.length - 1;
+      if (maxIdx <= 0) return;
+      const base = versionKeyboardChronoRef.current == null ? maxIdx : versionKeyboardChronoRef.current;
+      const next = Math.min(maxIdx, Math.max(0, base + delta));
+      if (next === base) return;
+      versionKeyboardChronoRef.current = next;
+      if (next !== maxIdx) {
+        handleRestoreCurrentSlide(next);
+      }
+    },
+    [publicView, persistBusy, currentSlideVersionsChrono.length, handleRestoreCurrentSlide],
+  );
+
   useEffect(() => {
-    if (unlockedSlideCount <= 1) return undefined;
+    versionKeyboardChronoRef.current = null;
+  }, [currentSlide]);
+
+  useEffect(() => {
     function onKeyDown(event) {
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
       const target = event.target;
       if (target instanceof Element && target.closest("input, textarea, select, [contenteditable='true']")) {
         return;
       }
       event.preventDefault();
-      if (event.key === "ArrowLeft") moveSlide(-1);
-      else moveSlide(1);
+      if (event.key === "ArrowUp") moveSlide(-1);
+      else if (event.key === "ArrowDown") moveSlide(1);
+      else if (event.key === "ArrowLeft") moveVersionByKeyboard(-1);
+      else moveVersionByKeyboard(1);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [unlockedSlideCount, moveSlide]);
+  }, [moveSlide, moveVersionByKeyboard]);
 
   const pdfExportLocked = useMemo(() => {
     if (!billingUsage || billingUsage.pdf_exports_limit == null) return false;

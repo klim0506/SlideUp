@@ -29,11 +29,11 @@ PRESENTATION_JSON_SCHEMA = {
                     "content": {"type": ["object", "string"]},
                     "icon": {
                         "type": "string",
-                        "description": "Single emoji that best represents this slide's topic.",
+                        "description": "Один emoji-символ, который лучше всего передаёт тему слайда.",
                     },
                     "chart": {
                         "type": "object",
-                        "description": "Bar chart data. Use on 'stats' slides when numbers tell the story better visually.",
+                        "description": "Данные столбчатой диаграммы. Используйте в 'stats', когда цифры лучше объясняют мысль визуально.",
                         "properties": {
                             "type": {"type": "string", "enum": ["bar"]},
                             "title": {"type": "string"},
@@ -55,7 +55,7 @@ PRESENTATION_JSON_SCHEMA = {
                     },
                     "image": {
                         "type": "boolean",
-                        "description": "Set true on ONE slide where the uploaded source image should be displayed visually.",
+                        "description": "Установите true ровно на ОДНОМ слайде, где нужно визуально показать загруженное изображение.",
                     },
                     "stats": {
                         "type": "array",
@@ -74,63 +74,66 @@ PRESENTATION_JSON_SCHEMA = {
 }
 
 
+# Глобальная роль модели и общие правила формата ответа.
 SYSTEM_PROMPT = (
-    "You are Slidegen, a senior presentation architect and strict JSON generator. "
-    "Return exactly one JSON object and no markdown, comments, prose, or code fences. "
-    "The object must validate against the schema in the user prompt. "
-    "Use concise, presentation-ready copy; avoid filler, duplicated ideas, and generic claims. "
-    "Every slide must have a clear purpose, a short title, an array of bullets, and a content field. "
-    "If information is missing, infer a practical business-oriented structure instead of asking questions.\n\n"
-    "VISUAL ENRICHMENT RULES:\n"
-    "1. chart: On 'stats' slides with quantitative data (revenue, percentages, comparisons), add a 'chart' object with type='bar' and 2-8 data points. Only use chart when real numbers exist or can be inferred from context.\n"
-    "   CRITICAL for charts: every label must be 1-2 short words (max 12 characters). Never use full sentences, long phrases, or abbreviations that need explanation. Labels must never overlap — if a label doesn't fit in 12 chars, rephrase it.\n"
-    "2. image: If the user provided a source image, set image=true on EXACTLY ONE slide where the image is most relevant to the visual context. Do NOT set image=true if no source image was provided.\n"
-    "3. stats: On 'stats' slides, populate the 'stats' array with 2-4 key metrics (value + label). Keep each label under 3 words."
+    "Ты SlidUp: старший дизайнер и архитектор презентаций. Генерируешь JSON-объекты для слайдов. "
+    "Верни ровно один JSON-объект: без markdown, комментариев, пояснений и code fences. "
+    "Объект должен проходить валидацию по схеме из пользовательского промпта. "
+    "Пиши кратко и по-деловому; избегай воды, повторов и общих фраз. "
+    "У каждого слайда должна быть ясная цель, короткий заголовок, массив bullets и поле content. "
+    "Если данных не хватает, строй практичную бизнес-структуру самостоятельно, не задавая уточняющих вопросов.\n\n"
+    "ПРАВИЛА ВИЗУАЛЬНОГО УСИЛЕНИЯ:\n"
+    "1. chart: в слайдах 'stats' с количественными данными (выручка, проценты, сравнения) добавляй объект 'chart' с type='bar' и 2-8 точками данных. Используй chart только там, где есть реальные или правдоподобно выводимые из контекста числа.\n"
+    "   КРИТИЧНО для chart: каждый label — 1-2 коротких слова (до 12 символов). Нельзя длинные фразы, полные предложения и аббревиатуры, требующие расшифровки. Подписи не должны пересекаться — если label не помещается в 12 символов, переформулируй.\n"
+    "2. image: если пользователь приложил исходное изображение, поставь image=true ровно на ОДНОМ наиболее уместном слайде. Если изображения нет — image=true не ставь ни на одном слайде.\n"
+    "3. stats: в слайдах 'stats' заполняй массив 'stats' 2-4 ключевыми метриками (value + label). Каждый label — до 3 слов."
 )
 
-# Style-specific instructions injected into the user prompt at generation time.
+# Общий блок, который добавляется к каждому стилю.
 _VISUAL_FREEDOM = (
-    "Visual freedom: look for every opportunity to show instead of tell — "
-    "turn a comparison into 'two_column', a claim into 'stats' with a chart, "
-    "a turning point or key idea into a 'quote', a call to action into 'cta'. "
-    "Use as few words as possible. Prefer zero bullets if a visual communicates better."
+    "Визуальная свобода: ищи любую возможность показывать, а не рассказывать — "
+    "сравнение превращай в 'two_column', тезис с числами в 'stats' + chart, "
+    "переломную мысль или главный инсайт в 'quote', призыв к действию в 'cta'. "
+    "Текст должен быть лаконичным, но каждый слайд — конкретным и информативным."
 )
 
+# Стили генерации, которые выбираются на фронте.
 STYLE_INSTRUCTIONS: dict[str, str] = {
     "pitch": (
-        "Presentation style: MINIMALIST.\n"
-        "Audience goal: make them lean forward, feel the idea, want to know more.\n"
-        "Tone: confident, surprising, visual — each slide earns its place.\n"
+        "Стиль презентации: МИНИМАЛИСТИЧНЫЙ ПИТЧ.\n"
+        "Цель для аудитории: вызвать интерес, вовлечь в идею и оставить желание узнать больше.\n"
+        "Тон: уверенный, немного неожиданый, визуальный — каждый слайд должен быть оправдан.\n"
         f"{_VISUAL_FREEDOM}\n"
-        "Do not follow a template. Find the single most compelling narrative arc for this specific topic."
+        "Не следуй шаблону. Найди самый сильный сюжетный ход именно для этой темы.\n"
+        "Даже в минимализме избегай пустых слайдов: каждый нетитульный слайд должен содержать минимум 2 конкретные мысли или 1 конкретную метрику."
     ),
     "report": (
-        "Presentation style: DETAILED REPORT.\n"
-        "Audience goal: a reader with no presenter must fully understand the findings and act on them.\n"
-        "Tone: formal, evidence-based, precise — back every claim with data or reasoning.\n"
+        "Стиль презентации: ПОДРОБНЫЙ ОТЧЁТ.\n"
+        "Цель для аудитории: читатель без докладчика должен полностью понять выводы и принять решение.\n"
+        "Тон: формальный, доказательный, точный — каждый тезис подкрепляй данными или логикой.\n"
         f"{_VISUAL_FREEDOM}\n"
-        "Write complete sentences where needed. Every slide must be self-explanatory."
+        "Где нужно, пиши полными фразами. Каждый слайд должен быть самодостаточным."
     ),
     "lecture": (
-        "Presentation style: EDUCATIONAL.\n"
-        "Audience goal: the audience leaves understanding a concept they didn't before.\n"
-        "Tone: clear, pedagogical, engaging — build knowledge step by step.\n"
+        "Стиль презентации: ОБУЧАЮЩАЯ ЛЕКЦИЯ.\n"
+        "Цель для аудитории: после презентации люди должны понимать концепт, которого раньше не знали.\n"
+        "Тон: ясный, педагогичный, вовлекающий — выстраивай знание по шагам.\n"
         f"{_VISUAL_FREEDOM}\n"
-        "Use 'quote' for definitions and axioms. Let the structure follow the learning arc, not a fixed template."
+        "Используй 'quote' для определений и аксиом. Структура должна следовать логике обучения, а не фиксированному шаблону."
     ),
     "analytical": (
-        "Presentation style: ANALYTICAL BRIEF.\n"
-        "Audience goal: decision-makers leave with a clear recommendation and the reasoning behind it.\n"
-        "Tone: analytical, action-oriented, factual — focus on decisions, not descriptions.\n"
+        "Стиль презентации: АНАЛИТИЧЕСКИЙ БРИФ.\n"
+        "Цель для аудитории: принимающие решения должны уйти с чёткой рекомендацией и обоснованием.\n"
+        "Тон: аналитичный, ориентированный на действие, фактологичный — фокус на решениях, а не на описаниях.\n"
         f"{_VISUAL_FREEDOM}\n"
-        "Use 'two_column' for trade-offs and comparisons. Let the data drive the structure."
+        "Используй 'two_column' для компромиссов и сравнений. Пусть данные определяют структуру."
     ),
     "proposal": (
-        "Presentation style: COMMERCIAL PROPOSAL.\n"
-        "Audience goal: the client sees their own problem reflected, believes in the solution, and knows the next step.\n"
-        "Tone: benefit-driven, persuasive, credible — speak to goals, not features.\n"
+        "Стиль презентации: КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ.\n"
+        "Цель для аудитории: клиент узнаёт свою проблему, верит в решение и понимает следующий шаг.\n"
+        "Тон: ориентированный на выгоду, убедительный, достоверный — говори про цели, а не про функции.\n"
         f"{_VISUAL_FREEDOM}\n"
-        "End with a strong 'cta' slide. Let the client's pain shape the narrative, not a sales template."
+        "Заверши сильным слайдом 'cta'. Наратив должен строиться вокруг боли клиента, а не вокруг шаблонной продажи."
     ),
 }
 
@@ -143,45 +146,48 @@ def build_prompt(
     audience="",
     slides_count=8,
     tone="",
-    language="Russian",
+    language="Русский",
     has_image=False,
     style="pitch",
 ) -> str:
-    """Build the user prompt for generating a structured slide deck JSON payload."""
+    """Собирает пользовательский промпт для генерации структуры презентации в JSON."""
     prompt_parts = [
-        f"Topic: {topic}",
-        f"Language: {language}",
-        f"Slides count: {slides_count}",
+        f"Тема: {topic}",
+        f"Язык: {language}",
+        f"Количество слайдов: {slides_count}",
     ]
     if context:
-        prompt_parts.append(f"Context: {context}")
+        prompt_parts.append(f"Контекст: {context}")
     if audience:
-        prompt_parts.append(f"Audience: {audience}")
+        prompt_parts.append(f"Аудитория: {audience}")
     if tone:
-        prompt_parts.append(f"Tone: {tone}")
+        prompt_parts.append(f"Тон: {tone}")
 
     style_key = style if style in KNOWN_STYLES else "pitch"
     prompt_parts.extend(["", STYLE_INSTRUCTIONS[style_key]])
 
     image_rule = (
-        "- A source image WAS uploaded. Set image=true on exactly one slide where it fits best."
+        "- Исходное изображение ЗАГРУЖЕНО. Установи image=true ровно на одном слайде, где это наиболее уместно."
         if has_image
-        else "- No source image was uploaded. Do NOT set image=true on any slide."
+        else "- Исходное изображение не загружено. Не устанавливай image=true ни на одном слайде."
     )
 
     prompt_parts.extend(
         [
             "",
-            "Hard requirements:",
-            f"- Return exactly {slides_count} slides.",
-            "- Use only these slide types: title, content, two_column, quote, stats, cta.",
-            "- The first slide must be type title.",
-            "- Keep every slide title under 80 characters.",
-            "- Bullets: use as few as the content demands; prefer zero if a visual type communicates better. Max 5, each under 120 characters.",
-            "- Add chart to stats slides when quantitative data is present.",
+            "Жёсткие требования:",
+            f"- Верни ровно {slides_count} слайдов.",
+            "- Используй только типы слайдов: title, content, two_column, quote, stats, cta.",
+            "- Первый слайд обязан быть типа title.",
+            "- Заголовок каждого слайда — до 80 символов.",
+            "- Базовая плотность информации: каждый нетитульный слайд должен нести конкретную ценность (факты, цифры, причины, последствия, рекомендации или следующие шаги). Избегай расплывчатых фраз.",
+            "- Bullets: на нетитульных слайдах обычно 3-5 пунктов (макс. 5, каждый до 120 символов)."
+            " Если используется визуально-ориентированный тип (quote/stats), оставляй минимум 2 конкретные мысли в bullets или content.",
+            "- Предпочитай конкретные сущности, числа, сроки и названия вместо общих абстракций.",
+            "- Добавляй chart в stats-слайды, когда есть количественные данные.",
             image_rule,
-            "- Do not include markdown, explanations, trailing commas, or comments.",
-            "- Return only valid JSON matching this JSON Schema:",
+            "- Не добавляй markdown, пояснения, завершающие запятые и комментарии.",
+            "- Верни только валидный JSON, соответствующий этой JSON Schema:",
             json.dumps(PRESENTATION_JSON_SCHEMA, ensure_ascii=False, indent=2),
         ]
     )

@@ -3,6 +3,7 @@ FROM python:3.12-slim-bookworm
 # weasyprint system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    curl \
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
@@ -15,6 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# install Claude CLI
+RUN curl -fsSL https://claude.ai/install.sh | bash && ln -sf /root/.local/bin/claude /usr/local/bin/claude
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

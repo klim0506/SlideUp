@@ -55,32 +55,62 @@ export function authHeaders() {
 
 export async function apiFetch(path, options = {}) {
   const includeAuth = options.includeAuth !== false;
+  const timeoutMs = Number.isFinite(Number(options.timeoutMs)) ? Math.max(1000, Number(options.timeoutMs)) : 120000;
   const headers = {
     ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
     ...(includeAuth ? authHeaders() : {}),
     ...(options.headers || {}),
   };
 
+  async function doFetch(reqHeaders) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const externalSignal = options.signal;
+    const onAbort = () => controller.abort();
+    if (externalSignal instanceof AbortSignal) {
+      externalSignal.addEventListener("abort", onAbort, { once: true });
+    }
+    try {
+      return await fetch(buildUrl(path), {
+        credentials: "include",
+        ...options,
+        headers: reqHeaders,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+      if (externalSignal instanceof AbortSignal) {
+        externalSignal.removeEventListener("abort", onAbort);
+      }
+    }
+  }
+
   let response;
   try {
-    response = await fetch(buildUrl(path), {
-      credentials: "include",
-      ...options,
-      headers,
-    });
+    response = await doFetch(headers);
   } catch (e) {
-    const raw = String(e?.message || e || "");
-    const isNet =
-      raw.includes("Failed to fetch") || raw.includes("NetworkError") || raw.includes("Load failed");
-    const msg = isNet
-      ? "Не получилось связаться с сервером. Проверьте интернет и попробуйте снова чуть позже."
-      : raw
-        ? "Сейчас запрос не прошёл. Попробуйте ещё раз через минуту."
-        : "Сеть недоступна. Попробуйте чуть позже.";
-    const err = new Error(msg);
-    err.status = 0;
-    err.data = {};
-    throw err;
+    // Dev servers may briefly drop connections during hot reload/restart.
+    // Retry once before surfacing a network error to the user.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    try {
+      response = await doFetch(headers);
+    } catch (retryErr) {
+      const raw = String(retryErr?.message || retryErr || "");
+      const timeoutLike = retryErr?.name === "AbortError" || raw.includes("AbortError");
+      const isNet =
+        raw.includes("Failed to fetch") || raw.includes("NetworkError") || raw.includes("Load failed");
+      const msg = timeoutLike
+        ? "Сервер отвечает слишком долго. Попробуйте ещё раз — обычно помогает повторный запуск."
+        : isNet
+          ? "Не получилось связаться с сервером. Проверьте интернет и попробуйте снова чуть позже."
+          : raw
+            ? "Сейчас запрос не прошёл. Попробуйте ещё раз через минуту."
+            : "Сеть недоступна. Попробуйте чуть позже.";
+      const err = new Error(msg);
+      err.status = 0;
+      err.data = {};
+      throw err;
+    }
   }
 
   if (response.status === 401 && includeAuth && getRefreshToken()) {
@@ -91,11 +121,7 @@ export async function apiFetch(path, options = {}) {
         ...authHeaders(),
         ...(options.headers || {}),
       };
-      response = await fetch(buildUrl(path), {
-        credentials: "include",
-        ...options,
-        headers: retryHeaders,
-      });
+      response = await doFetch(retryHeaders);
     } else {
       clearTokens();
     }
