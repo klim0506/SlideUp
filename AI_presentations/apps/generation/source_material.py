@@ -9,6 +9,17 @@ from io import BytesIO
 # Claude vision: jpeg, png, gif, webp (остальные типы — только текстом в промпте)
 _FALLBACK_IMG_LABEL = "application/octet-stream"
 
+# Защита от слишком больших документов: всё, что выше, обрезается с пометкой.
+# Эмпирически 60k символов ≈ 15-20k токенов — безопасный потолок при модели на 4096 токенов вывода.
+_MAX_EXTRACTED_CHARS = 60_000
+
+
+def _truncate_extracted(text: str) -> str:
+    if len(text) <= _MAX_EXTRACTED_CHARS:
+        return text
+    head = text[:_MAX_EXTRACTED_CHARS].rstrip()
+    return f"{head}\n\n[…текст файла усечён по длине, передана начальная часть…]"
+
 
 def _pptx_to_text(raw: bytes) -> str:
     from pptx import Presentation
@@ -86,7 +97,7 @@ def process_uploaded_source(uploaded) -> tuple[str, list[dict]]:
 
     if extracted.strip():
         addendum = (
-            f'\n\n--- Текст из файла «{name}» ---\n{extracted.strip()}\n--- Конец файла ---\n'
+            f'\n\n--- Текст из файла «{name}» ---\n{_truncate_extracted(extracted.strip())}\n--- Конец файла ---\n'
         )
     else:
         addendum = (

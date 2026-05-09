@@ -1,20 +1,38 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, SlideThumb, accentForTheme } from "@/lib/design";
 import { apiJson, navigate } from "@/lib/api";
+import { takePendingSource } from "@/lib/genHandoff";
 
-const STEPS = [
-  { id: "outline", label: "Собираем структуру" },
-  { id: "content", label: "Пишем текст слайдов" },
-  { id: "design", label: "Применяем выбранный стиль" },
-  { id: "finalize", label: "Готовим просмотр и экспорт" },
+const PHASES = [
+  { id: "outline", label: "Структура" },
+  { id: "content", label: "Текст" },
+  { id: "design", label: "Стиль" },
+  { id: "finalize", label: "Финал" },
 ];
 
+const TICKER_LINES = [
+  "Раскладываем рассказ по слайдам",
+  "Сжимаем суть в короткие, ёмкие тезисы",
+  "Ищем точные формулировки",
+  "Подбираем визуальный ритм",
+  "Сверяем тон с выбранным стилем",
+  "Чистим перегруженные места",
+  "Думаем за зрителя — что он унесёт с собой",
+];
+
+const FILE_TICKER_PREFIX = "Читаем ваш файл и достаём суть";
+
 export default function Generating() {
-  const [stepIndex, setStepIndex] = useState(0);
+  const [phaseIndex, setPhaseIndex] = useState(0);
   const [thumbs, setThumbs] = useState([]);
   const [error, setError] = useState("");
   const [config, setConfig] = useState(null);
+  const [sourceFile, setSourceFile] = useState(null);
+  const [sourceMeta, setSourceMeta] = useState(null);
+  const [tickerIndex, setTickerIndex] = useState(0);
+  const [done, setDone] = useState(false);
   const calledRef = useRef(false);
+  const startedAtRef = useRef(Date.now());
 
   useEffect(() => {
     const raw = sessionStorage.getItem("genConfig");
@@ -26,59 +44,89 @@ export default function Generating() {
       setConfig(JSON.parse(raw));
     } catch {
       navigate("/");
+      return;
     }
+    const handoff = takePendingSource();
+    setSourceFile(handoff.file);
+    setSourceMeta(handoff.meta);
   }, []);
 
   useEffect(() => {
     if (!config || calledRef.current) return;
     calledRef.current = true;
-    runGeneration(config);
-  }, [config]);
+    runGeneration(config, sourceFile);
+  }, [config, sourceFile]);
 
-  async function runGeneration(cfg) {
+  // Keep advancing phases up to the last one while we wait. The final tick to "done"
+  // happens only when the API actually responds — phases 0..N-1 drift on a timer
+  // so users see momentum, but the last phase locks until reality catches up.
+  useEffect(() => {
+    if (error || done) return undefined;
     const timer = setInterval(() => {
-      setStepIndex((current) => {
-        if (current < STEPS.length - 1) return current + 1;
-        clearInterval(timer);
-        return current;
-      });
-    }, 1800);
+      setPhaseIndex((p) => (p < PHASES.length - 1 ? p + 1 : p));
+    }, 2400);
+    return () => clearInterval(timer);
+  }, [error, done]);
 
+  useEffect(() => {
+    if (error || done) return undefined;
+    const timer = setInterval(() => {
+      setTickerIndex((i) => (i + 1) % TICKER_LINES.length);
+    }, 2200);
+    return () => clearInterval(timer);
+  }, [error, done]);
+
+  async function runGeneration(cfg, file) {
     try {
-      const data = await apiJson("/api/generate/", {
-        method: "POST",
-        body: JSON.stringify({
-          prompt: cfg.prompt,
-          slides_count: cfg.slides_count || cfg.slideCount || 5,
-          theme: cfg.theme || "light",
-          style: cfg.style || "pitch",
-        }),
-      });
-
-      clearInterval(timer);
-      setStepIndex(STEPS.length - 1);
-      if (data.slides?.length) {
-        setThumbs(data.slides.slice(0, 6));
-        await delay(800);
+      const slidesCount = cfg.slides_count || cfg.slideCount || 5;
+      let response;
+      if (file) {
+        const fd = new FormData();
+        fd.append("prompt", cfg.prompt || "");
+        fd.append("slides_count", String(slidesCount));
+        fd.append("theme", cfg.theme || "light");
+        fd.append("style", cfg.style || "pitch");
+        fd.append("source_file", file);
+        response = await apiJson("/api/generate/", { method: "POST", body: fd });
+      } else {
+        response = await apiJson("/api/generate/", {
+          method: "POST",
+          body: JSON.stringify({
+            prompt: cfg.prompt,
+            slides_count: slidesCount,
+            theme: cfg.theme || "light",
+            style: cfg.style || "pitch",
+          }),
+        });
       }
+
+      setPhaseIndex(PHASES.length - 1);
+      if (response.slides?.length) {
+        setThumbs(response.slides.slice(0, 6));
+      }
+      setDone(true);
+
+      // Honor a minimum on-screen time so the experience doesn't flash on fast responses.
+      const elapsed = Date.now() - startedAtRef.current;
+      const minVisible = 2400;
+      if (elapsed < minVisible) {
+        await delay(minVisible - elapsed);
+      }
+
       sessionStorage.removeItem("genConfig");
-      navigate(`/presentation/${data.id}`);
+      navigate(`/presentation/${response.id}`);
     } catch (err) {
-      clearInterval(timer);
       setError(err.message || "Пока не получилось создать презентацию — загляните чуть позже или попробуйте снова.");
     }
   }
 
-  const accent = accentForTheme(config?.theme);
-
-  return (
-    <div className="su-page" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 56 }}>
-        <Icon name="logo" size={20} style={{ color: "var(--accent)" }} />
-        <span style={{ fontSize: 17, fontWeight: 750, color: "var(--ink)", letterSpacing: "-0.01em" }}>SlideUp</span>
-      </div>
-
-      {error ? (
+  if (error) {
+    return (
+      <div className="su-page" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 56 }}>
+          <Icon name="logo" size={20} style={{ color: "var(--accent)" }} />
+          <span style={{ fontSize: 17, fontWeight: 750, color: "var(--ink)", letterSpacing: "-0.01em" }}>SlideUp</span>
+        </div>
         <div style={{ textAlign: "center", maxWidth: 460 }}>
           <div style={{ width: 56, height: 56, borderRadius: 999, background: "var(--accent-soft)", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
             <Icon name="x" size={24} style={{ color: "var(--ink-3)" }} />
@@ -89,64 +137,156 @@ export default function Generating() {
             Вернуться и попробовать снова
           </button>
         </div>
-      ) : (
-        <div style={{ width: "100%", maxWidth: 540, textAlign: "center" }}>
-          <div style={{ marginBottom: 40 }}>
-            <h2 style={{ fontSize: 30, fontWeight: 760, letterSpacing: "-0.035em", margin: "0 0 8px" }}>
-              Создаём вашу презентацию
-            </h2>
-            {config?.prompt ? (
-              <p style={{ color: "var(--ink-3)", fontSize: 14, margin: 0 }}>«{config.prompt}»</p>
-            ) : null}
-          </div>
+      </div>
+    );
+  }
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 44, textAlign: "left" }}>
-            {STEPS.map((step, index) => {
-              const done = index < stepIndex;
-              const active = index === stepIndex;
-              return (
-                <div key={step.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", background: active ? "var(--surface)" : "transparent", border: `1px solid ${active ? "var(--line)" : "transparent"}`, borderRadius: "var(--r-md)", boxShadow: active ? "var(--sh-sm)" : "none", transition: "all 300ms var(--ease)" }}>
-                  <div style={{ width: 24, height: 24, borderRadius: 999, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: done ? "var(--accent)" : active ? "var(--surface-2)" : "transparent", border: `2px solid ${done || active ? "var(--accent)" : "var(--line-2)"}` }}>
-                    {done ? <Icon name="check" size={12} style={{ color: "#fff" }} /> : active ? <SpinDot /> : null}
-                  </div>
-                  <span style={{ fontSize: 14, fontWeight: active ? 700 : 500, color: active ? "var(--ink)" : done ? "var(--ink-2)" : "var(--ink-4)" }}>
-                    {step.label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+  const visualPhase = done ? PHASES.length : phaseIndex;
+  const accent = accentForTheme(config?.theme);
+  const slidesCount = config?.slides_count || 5;
+  const fileName = sourceFile?.name || sourceMeta?.name || config?.source_file_name || "";
+  const tickerLine = done
+    ? "Открываем презентацию…"
+    : (sourceFile && phaseIndex === 0 ? FILE_TICKER_PREFIX : TICKER_LINES[tickerIndex]);
 
-          {thumbs.length > 0 ? (
-            <div style={{ display: "flex", gap: 8, justifyContent: "center", animation: "fadeIn 400ms var(--ease) both" }}>
-              {thumbs.map((slide, index) => (
-                <div key={index} style={{ width: 72, borderRadius: "var(--r-sm)", overflow: "hidden", border: "1px solid var(--line)" }}>
-                  <SlideThumb
-                    slide={slide}
-                    accent={accent}
-                    theme={config?.theme || "light"}
-                    slideIndex={index}
-                    slideTotal={Math.max(thumbs.length, index + 1)}
-                  />
-                </div>
-              ))}
+  return (
+    <div className="su-page gen-magic-page">
+      <div className="gen-magic-bg" aria-hidden="true">
+        <div className="gen-magic-orb gen-magic-orb-a" />
+        <div className="gen-magic-orb gen-magic-orb-b" />
+      </div>
+
+      <div className="gen-magic-shell">
+        <div className="gen-magic-brand">
+          <span className="gen-magic-brand-aura" aria-hidden="true" />
+          <Icon name="logo" size={22} style={{ color: "var(--accent)", position: "relative", zIndex: 1 }} />
+          <span style={{ fontSize: 16, fontWeight: 750, letterSpacing: "-0.01em", position: "relative", zIndex: 1 }}>SlideUp</span>
+        </div>
+
+        <div className="gen-magic-headline">
+          <h1 className="gen-magic-title">Создаём вашу презентацию</h1>
+          {config?.prompt ? (
+            <p className="gen-magic-prompt">«{config.prompt}»</p>
+          ) : null}
+          {fileName ? (
+            <div className="gen-magic-source">
+              <Icon name="paperclip" size={12} stroke={2.2} />
+              <span>{fileName}</span>
             </div>
           ) : null}
-
-          <div style={{ marginTop: 40, height: 3, background: "var(--surface-2)", borderRadius: 99, overflow: "hidden" }}>
-            <div style={{ height: "100%", background: "var(--accent)", borderRadius: 99, width: `${((stepIndex + 1) / STEPS.length) * 100}%`, transition: "width 600ms var(--ease)" }} />
-          </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: "var(--ink-3)" }}>
-            Шаг {stepIndex + 1} из {STEPS.length}
-          </div>
         </div>
-      )}
+
+        <MagicStage
+          phase={Math.min(visualPhase, PHASES.length - 1)}
+          done={done}
+          thumbs={thumbs}
+          accent={accent}
+          theme={config?.theme || "light"}
+          slideCount={slidesCount}
+        />
+
+        <div className="gen-magic-ticker" aria-live="polite">
+          <span className="gen-magic-ticker-spark" aria-hidden="true" />
+          <span key={tickerLine} className="gen-magic-ticker-line">{tickerLine}</span>
+        </div>
+
+        <div className="gen-magic-steps" role="list">
+          {PHASES.map((step, index) => {
+            const stepDone = done || index < visualPhase;
+            const active = !done && index === visualPhase;
+            return (
+              <div
+                key={step.id}
+                role="listitem"
+                className={`gen-magic-step${active ? " gen-magic-step--active" : ""}${stepDone ? " gen-magic-step--done" : ""}`}
+              >
+                <span className="gen-magic-step-bullet" aria-hidden="true">
+                  {stepDone ? (
+                    <Icon name="check" size={10} stroke={2.6} style={{ color: "var(--accent-fg)" }} />
+                  ) : active ? (
+                    <span className="gen-magic-step-dot" />
+                  ) : null}
+                </span>
+                <span className="gen-magic-step-label">{step.label}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="gen-magic-bar" aria-hidden="true">
+          <div
+            className="gen-magic-bar-fill"
+            style={{ width: `${(Math.min(visualPhase + 1, PHASES.length) / PHASES.length) * 100}%` }}
+          />
+          {!done ? <div className="gen-magic-bar-shimmer" /> : null}
+        </div>
+      </div>
     </div>
   );
 }
 
-function SpinDot() {
-  return <div style={{ width: 8, height: 8, borderRadius: 999, background: "var(--accent)", animation: "pulse 900ms ease infinite" }} />;
+function MagicStage({ phase, done, thumbs, accent, theme, slideCount }) {
+  const showThumbs = done && thumbs.length > 0;
+  const placeholderTotal = Math.max(3, Math.min(6, Number(slideCount) || 5));
+  return (
+    <div className="gen-magic-stage" data-phase={phase} data-done={done ? "true" : "false"}>
+      <div className="gen-magic-stage-glow" aria-hidden="true" />
+      <div className="gen-magic-stage-scan" aria-hidden="true" />
+
+      <div className={`gen-magic-stage-mock${showThumbs ? " is-fading" : ""}`} aria-hidden="true">
+        <div className="gen-mock-accent" style={{ background: accent }} />
+
+        <div className="gen-mock-eyebrow">
+          <span style={{ background: accent, "--w": "14%" }} />
+        </div>
+
+        <div className="gen-mock-title">
+          <span style={{ width: "62%" }} />
+          <span style={{ width: "38%" }} />
+        </div>
+
+        <div className="gen-mock-bullets">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="gen-mock-bullet" style={{ animationDelay: `${0.5 + i * 0.18}s` }}>
+              <span className="gen-mock-bullet-dot" style={{ background: accent }} />
+              <span
+                className="gen-mock-bullet-line"
+                style={{
+                  animationDelay: `${0.6 + i * 0.18}s`,
+                  "--w": `${82 - i * 14}%`,
+                }}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div className="gen-mock-foot">
+          <span>SLIDEUP</span>
+          <span className="gen-mock-foot-dots">
+            {[0, 1, 2].map((i) => (
+              <span key={i} style={{ background: i === 0 ? accent : "currentColor" }} />
+            ))}
+          </span>
+        </div>
+      </div>
+
+      <div className={`gen-magic-stage-thumbs${showThumbs ? " is-visible" : ""}`}>
+        {showThumbs
+          ? thumbs.map((slide, index) => (
+              <div key={index} className="gen-magic-thumb" style={{ animationDelay: `${index * 70}ms` }}>
+                <SlideThumb
+                  slide={slide}
+                  accent={accent}
+                  theme={theme}
+                  slideIndex={index}
+                  slideTotal={Math.max(thumbs.length, placeholderTotal)}
+                />
+              </div>
+            ))
+          : null}
+      </div>
+    </div>
+  );
 }
 
 function delay(ms) {

@@ -6,7 +6,8 @@ import SiteHeader from "@/components/SiteHeader";
 import { Icon, PITCH_SLIDES, PRESENTATION_STYLES, STYLE_PRESETS, StylePreview, canUnlockPreset } from "@/lib/design";
 import UpsellModal from "@/components/UpsellModal";
 import { freeLandingFeatureItems, studentLandingFeatureItems } from "@/lib/planLimits";
-import { getMe, logout, navigate, apiJson } from "@/lib/api";
+import { setPendingSource } from "@/lib/genHandoff";
+import { getMe, logout, navigate } from "@/lib/api";
 
 const HERO_AUDIENCES = ["дизайнеры", "предприниматели", "менеджеры", "студенты", "компании"];
 
@@ -35,7 +36,6 @@ export default function Home({ workspaceMode = false }) {
   const [authIntent, setAuthIntent] = useState("login");
   const pendingSlideCountAfterAuthRef = useRef(null);
   const [docFile, setDocFile] = useState(null);
-  const [createBusy, setCreateBusy] = useState(false);
   const [createErr, setCreateErr] = useState("");
   const fileInputRef = useRef(null);
   const [upsellOpen, setUpsellOpen] = useState(false);
@@ -114,7 +114,7 @@ export default function Home({ workspaceMode = false }) {
     }
   }, [user?.plan, styleId]);
 
-  async function handleCreate(options = {}) {
+  function handleCreate(options = {}) {
     setCreateErr("");
     if (!isHeroPromptValid(prompt)) {
       setCreateErr("Расскажите тему чуть подробнее — от 4 символов без лишних пробелов по краям.");
@@ -124,26 +124,6 @@ export default function Home({ workspaceMode = false }) {
     const trimmed = prompt.trim();
     const requestedSlideCount = options.slideCount ?? slideCount;
 
-    if (docFile) {
-      setCreateBusy(true);
-      try {
-        const fd = new FormData();
-        fd.append("prompt", trimmed);
-        fd.append("slides_count", String(requestedSlideCount));
-        fd.append("theme", styleId);
-        fd.append("style", presentationStyle);
-        fd.append("source_file", docFile);
-        const data = await apiJson("/api/generate/", { method: "POST", body: fd });
-        sessionStorage.removeItem("genConfig");
-        navigate(`/presentation/${data.id}`);
-      } catch (e) {
-        setCreateErr(e?.message || "Презентация не создалась — можно попробовать ещё раз чуть позже.");
-      } finally {
-        setCreateBusy(false);
-      }
-      return;
-    }
-
     sessionStorage.setItem(
       "genConfig",
       JSON.stringify({
@@ -151,10 +131,11 @@ export default function Home({ workspaceMode = false }) {
         slides_count: requestedSlideCount,
         theme: styleId,
         style: presentationStyle,
-        source_file_name: "",
-        source_mime: "",
+        source_file_name: docFile?.name || "",
+        source_mime: docFile?.type || "",
       }),
     );
+    setPendingSource(docFile);
     navigate("/generating");
   }
 
@@ -208,7 +189,6 @@ export default function Home({ workspaceMode = false }) {
         docFile={docFile}
         setDocFile={setDocFile}
         fileInputRef={fileInputRef}
-        createBusy={createBusy}
         createErr={createErr}
         isLoggedIn={Boolean(user)}
         canSubmitCreate={isHeroPromptValid(prompt)}
@@ -259,7 +239,6 @@ function Hero({
   docFile,
   setDocFile,
   fileInputRef,
-  createBusy,
   createErr,
   isLoggedIn,
   canSubmitCreate,
@@ -368,7 +347,7 @@ function Hero({
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmitCreate && !createBusy) {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmitCreate) {
                     void onCreate();
                   }
                 }}
@@ -433,15 +412,11 @@ function Hero({
                   <button
                     type="button"
                     className="su-btn su-btn-accent"
-                    disabled={createBusy || !canSubmitCreate}
+                    disabled={!canSubmitCreate}
                     onClick={() => void onCreate()}
                     style={{ fontSize: 15 }}
                   >
-                    {createBusy ? "Создаём…" : (
-                      <>
-                        Создать <Icon name="arrow-right" size={16} />
-                      </>
-                    )}
+                    Создать <Icon name="arrow-right" size={16} />
                   </button>
                 </div>
               </div>
@@ -473,7 +448,7 @@ function Hero({
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmitCreate && !createBusy) {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmitCreate) {
               void onCreate();
             }
           }}
@@ -537,15 +512,11 @@ function Hero({
             <button
               type="button"
               className="su-btn su-btn-accent"
-              disabled={createBusy || !canSubmitCreate}
+              disabled={!canSubmitCreate}
               onClick={() => void onCreate()}
               style={{ fontSize: 15 }}
             >
-              {createBusy ? "Создаём…" : (
-                <>
-                  Создать <Icon name="arrow-right" size={16} />
-                </>
-              )}
+              Создать <Icon name="arrow-right" size={16} />
             </button>
           </div>
         </div>
