@@ -305,7 +305,7 @@ export function presentationThemeDisplayName(themeId) {
 /** Единый формат строки: «Стиль презентации …». */
 export function presentationStyleCaption(themeId) {
   const name = presentationThemeDisplayName(themeId || "light");
-  return name ? `Стиль презентации ${name}` : "";
+  return name ? `${name}` : "";
 }
 
 export const PITCH_SLIDES = [

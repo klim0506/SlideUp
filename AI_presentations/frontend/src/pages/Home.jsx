@@ -543,7 +543,7 @@ function StylePicker({ value, onChange, userPlan = "free", onLockedPreset }) {
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-describedby={open ? undefined : "hero-style-hover-tip"}
-        aria-label={`Стиль презентации: ${selectedPreset.name}`}
+        aria-label={`${selectedPreset.name}`}
         className="hero-action-picker-btn"
       >
         <div className="hero-action-picker-thumb">
