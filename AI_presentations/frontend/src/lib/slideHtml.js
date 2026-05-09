@@ -16,24 +16,64 @@ export const PRESENTATION_FORMAT_HTML_V1 = "html_v1";
 export const PRESENTATION_FORMAT_JSON_V1 = "json_v1";
 
 const ALLOWED_TAGS = [
-  "section", "header", "footer",
-  "h1", "h2", "h3", "h4",
-  "p", "ul", "ol", "li",
-  "blockquote", "cite",
-  "strong", "em", "b", "i", "u", "s", "small", "mark", "br",
-  "span", "div", "figure", "figcaption", "img",
-  "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption",
-  "code", "pre", "kbd", "abbr", "hr",
+  "section", "article", "aside", "nav", "header", "footer", "main",
+  "h1", "h2", "h3", "h4", "h5", "h6",
+  "p", "ul", "ol", "li", "dl", "dt", "dd",
+  "blockquote", "cite", "q",
+  "strong", "em", "b", "i", "u", "s", "small", "mark", "br", "wbr",
+  "span", "div", "figure", "figcaption", "img", "picture", "source",
+  "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "colgroup", "col",
+  "code", "pre", "kbd", "abbr", "samp", "var", "sub", "sup",
+  "time", "address", "details", "summary", "progress", "meter", "del", "ins", "ruby", "rt", "rp",
+  "hr",
+  // SVG
+  "svg", "g", "defs", "use", "symbol", "title", "desc",
+  "path", "circle", "ellipse", "rect", "line", "polyline", "polygon",
+  "text", "tspan", "textPath",
+  "linearGradient", "radialGradient", "stop",
+  "clipPath", "mask", "pattern", "marker", "foreignObject",
+  "filter", "feGaussianBlur", "feOffset", "feMerge", "feMergeNode",
+  "feColorMatrix", "feDropShadow", "feBlend", "feFlood", "feComposite",
 ];
 
 const ALLOWED_ATTR = [
-  "class", "id", "style",
+  // Common
+  "class", "id", "style", "title", "lang", "dir", "role", "tabindex",
+  "aria-label", "aria-labelledby", "aria-describedby", "aria-hidden",
   "data-layout", "data-format", "data-role", "data-slot", "data-marker",
-  "data-icon", "data-image-ref", "data-asset",
-  "href", "title", "rel", "target",
-  "src", "alt", "width", "height",
-  "scope", "colspan", "rowspan", "start", "type",
-  "cite",
+  "data-icon", "data-image-ref", "data-asset", "data-variant", "data-tone",
+  "data-accent", "data-step", "data-index",
+  // Links / media
+  "href", "rel", "target", "download",
+  "src", "alt", "width", "height", "loading", "decoding", "srcset", "sizes",
+  // Tables / lists
+  "scope", "colspan", "rowspan", "start", "type", "reversed", "value",
+  "summary", "abbr", "headers",
+  // Quotes / time
+  "cite", "datetime", "open",
+  // Progress / meter
+  "min", "max", "low", "high", "optimum",
+  // SVG
+  "viewBox", "xmlns", "xmlns:xlink", "preserveAspectRatio",
+  "fill", "fill-opacity", "fill-rule",
+  "stroke", "stroke-width", "stroke-opacity",
+  "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset",
+  "stroke-miterlimit",
+  "opacity", "transform", "transform-origin",
+  "cx", "cy", "r", "rx", "ry", "x", "y", "x1", "y1", "x2", "y2",
+  "d", "points", "dx", "dy", "offset",
+  "stop-color", "stop-opacity",
+  "gradientUnits", "gradientTransform", "spreadMethod",
+  "patternUnits", "patternContentUnits", "patternTransform",
+  "maskUnits", "clipPathUnits",
+  "clip-path", "mask", "filter",
+  "text-anchor", "dominant-baseline", "alignment-baseline",
+  "font-family", "font-size", "font-weight", "font-style",
+  "letter-spacing", "text-decoration",
+  "vector-effect", "paint-order",
+  "stdDeviation", "in", "in2", "result", "values",
+  "xlink:href", "from", "to", "begin", "dur", "repeatCount",
+  "color", "marker-end", "marker-start", "marker-mid", "orient",
 ];
 
 const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto|cid):|#|\/|data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,)/i;
@@ -43,7 +83,7 @@ const PURIFY_CONFIG = {
   ALLOWED_ATTR,
   ALLOWED_URI_REGEXP,
   FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "link", "meta", "input"],
-  FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
+  FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur", "onchange", "onsubmit"],
   ADD_DATA_URI_TAGS: ["img"],
   KEEP_CONTENT: true,
 };

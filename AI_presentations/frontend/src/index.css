@@ -3767,3 +3767,287 @@ a { color: inherit; text-decoration: none; }
 @layer base {
   * { @apply border-border; }
 }
+
+/* =============================================================
+ * V2 editor theme — applied via the `.editor-v2` class on the
+ * PresentationView root. Retokens the subtree to a denser,
+ * cooler-grey palette with sharper accent and tighter radii.
+ * Existing components keep working because they reference the
+ * tokens (--bg, --surface, --accent, --line, --r-md, --sh-*).
+ * ============================================================= */
+.editor-v2 {
+  --bg: #f6f8fb;
+  --surface: #ffffff;
+  --surface-2: #f1f4f9;
+  --surface-3: #e9edf4;
+
+  --ink: #0d1426;
+  --ink-2: #5b6478;
+  --ink-3: #98a0b0;
+  --ink-4: #c2c8d3;
+
+  --line: #e5e8ef;
+  --line-2: #d2d7e2;
+
+  --accent: #2d5bff;
+  --accent-2: #3b6bff;
+  --accent-soft: #eaf0ff;
+  --accent-soft-2: #dbe5ff;
+  --accent-deep: #1f47db;
+  --accent-fg: #ffffff;
+
+  --success: #10b981;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+
+  --sh-sm: 0 1px 2px rgba(13, 20, 38, 0.05);
+  --sh-md: 0 6px 22px rgba(13, 20, 38, 0.07), 0 1px 2px rgba(13, 20, 38, 0.04);
+  --sh-lg: 0 12px 40px rgba(13, 20, 38, 0.12), 0 1px 2px rgba(13, 20, 38, 0.04);
+
+  font-family: Inter, var(--font-sans);
+  font-feature-settings: "cv11", "ss01", "ss03";
+  letter-spacing: -0.08px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.editor-v2 .su-btn {
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+.editor-v2 .su-btn-outline {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  box-shadow: var(--sh-sm);
+}
+.editor-v2 .su-btn-outline:hover:not(:disabled) {
+  border-color: var(--line-2);
+  background: var(--surface);
+  box-shadow: var(--sh-md);
+}
+.editor-v2 .su-btn-outline:disabled {
+  background: var(--surface);
+  color: var(--ink-3);
+  border-color: var(--line);
+  box-shadow: none;
+  opacity: 0.55;
+}
+.editor-v2 .su-btn-accent {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: 1px solid transparent;
+  box-shadow: 0 6px 18px rgba(45, 91, 255, 0.28), 0 1px 1px rgba(13, 20, 38, 0.06);
+}
+.editor-v2 .su-btn-accent:hover:not(:disabled) {
+  background: var(--accent-2);
+  box-shadow: 0 10px 24px rgba(45, 91, 255, 0.32), 0 1px 1px rgba(13, 20, 38, 0.06);
+}
+
+/* V2 "v2" pill badge after the editor title */
+.editor-v2 .editor-v2-version-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  margin-left: 8px;
+  vertical-align: middle;
+  border: 1px solid var(--accent-soft-2);
+}
+
+/* V2 breadcrumb separator and link */
+.editor-v2 .editor-v2-breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-3);
+  font-size: 14px;
+  font-weight: 500;
+}
+.editor-v2 .editor-v2-breadcrumb a,
+.editor-v2 .editor-v2-breadcrumb button {
+  color: var(--ink-3);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.editor-v2 .editor-v2-breadcrumb a:hover,
+.editor-v2 .editor-v2-breadcrumb button:hover {
+  color: var(--ink);
+}
+.editor-v2 .editor-v2-breadcrumb span[data-sep] {
+  color: var(--ink-4);
+  user-select: none;
+}
+
+/* Filmstrip — V2 surfaces & cards */
+.editor-v2 .filmstrip-sidebar {
+  background: transparent;
+  padding: 4px 8px 8px 0;
+}
+/* The visible thumbnail surface lives in the inner div of each thumb. */
+.editor-v2 .filmstrip-thumb > div:first-child {
+  border-radius: var(--r-md) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: var(--sh-sm) !important;
+  background: var(--surface) !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.editor-v2 .filmstrip-thumb:hover > div:first-child {
+  border-color: var(--line-2) !important;
+  box-shadow: var(--sh-md) !important;
+}
+.editor-v2 .filmstrip-thumb[data-active="true"] > div:first-child {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--accent-soft), var(--sh-md) !important;
+}
+/* Soften the wrapper button's own background so the inner card stands out cleanly. */
+.editor-v2 .filmstrip-thumb {
+  background: transparent !important;
+}
+.editor-v2 .filmstrip-thumb[data-active="true"] {
+  background: transparent !important;
+}
+.editor-v2 .filmstrip-add-slide > div {
+  background: var(--surface-2) !important;
+  border: 1px dashed var(--line-2) !important;
+  color: var(--ink-2) !important;
+  border-radius: var(--r-md) !important;
+  box-shadow: none !important;
+}
+.editor-v2 .filmstrip-add-slide:hover > div {
+  background: var(--surface-3) !important;
+  border-color: var(--accent-soft-2) !important;
+  color: var(--accent-deep) !important;
+}
+
+/* Right sidebar (AI / Design / History panels) */
+.editor-v2 .editor-right-sidebar {
+  border-radius: var(--r-xl) !important;
+  box-shadow: var(--sh-md) !important;
+}
+.editor-v2 .editor-right-sidebar > div:first-child {
+  border-radius: var(--r-xl) 0 0 var(--r-xl) !important;
+  border-color: var(--line) !important;
+  box-shadow: var(--sh-md) !important;
+  background: var(--surface) !important;
+}
+.editor-v2 .editor-right-sidebar > div:first-child > div {
+  background: var(--surface) !important;
+}
+
+/* Slide stage frame */
+.editor-v2 .slide-canvas-transition {
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-md);
+  padding: 12px;
+}
+
+/* AppHeader — quiet down inside the editor (V2 has a single integrated header) */
+.editor-v2-page > header:first-of-type {
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(18px);
+  padding: 14px max(20px, 3vw);
+}
+
+/* Title row — denser typography */
+.editor-v2 h1 {
+  font-family: Inter, var(--font-display);
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+/* Action chip row above the AI input */
+.editor-v2-action-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.editor-v2-action-chips > button {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.editor-v2-action-chips > button:hover {
+  border-color: var(--accent-soft-2);
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+
+/* ── V2 AI panel (DeckAiComposer inside .editor-v2) ─────────────────────── */
+.editor-v2 .hero-composer {
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-radius: var(--r-xl) !important;
+  border: 1px solid var(--line) !important;
+  background: var(--surface) !important;
+  box-shadow: var(--sh-md) !important;
+  overflow: hidden;
+}
+
+.editor-v2 .hero-composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line)) !important;
+  box-shadow: var(--sh-md), 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent) !important;
+}
+
+.editor-v2 .hero-textarea {
+  border: none !important;
+  outline: none !important;
+  border-radius: var(--r-md) !important;
+  min-height: 64px !important;
+  font-size: 13px !important;
+  padding: 10px 12px !important;
+  background: var(--surface) !important;
+}
+
+.editor-v2 .hero-mic-btn,
+.editor-v2 .hero-attach-btn {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: var(--r-sm) !important;
+  background: var(--surface-2) !important;
+}
+
+.editor-v2 .hero-controls {
+  padding: 0 !important;
+}
+
+/* Version pills below the slide */
+.editor-v2 [data-version-pill="true"] {
+  background: var(--surface-2);
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.editor-v2 [data-version-pill="true"][data-active="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
+}

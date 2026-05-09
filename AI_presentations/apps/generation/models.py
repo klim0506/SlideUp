@@ -13,10 +13,17 @@ class GenerationSettings(models.Model):
     )
     cli_command = models.CharField(max_length=255, default="claude")
     cli_model = models.CharField(max_length=255, blank=True)
-    cli_timeout_seconds = models.PositiveIntegerField(default=120)
+    cli_timeout_seconds = models.PositiveIntegerField(default=300)
     cli_extra_args = models.TextField(blank=True)
     cli_disable_tools = models.BooleanField(default=True)
     cli_skip_permissions = models.BooleanField(default=False)
+    api_max_tokens = models.PositiveIntegerField(
+        default=16384,
+        help_text=(
+            "Anthropic API max_tokens for generation calls. Larger values allow"
+            " richer slides but cost more and take longer. Range 1024–32000."
+        ),
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

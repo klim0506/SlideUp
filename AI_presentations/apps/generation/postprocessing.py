@@ -23,14 +23,34 @@ from apps.presentations.slide_html import (
 )
 
 
-MAX_TITLE_LENGTH = 80
+MAX_TITLE_LENGTH = 160
 MIN_SLIDES = 1
 
-VALID_LAYOUTS = frozenset({"title", "content", "two_column", "quote", "stats", "cta"})
+# Layouts the renderers know how to style/export specifically. Anything else is
+# kept as-is (free-form hint). The set is documentation, not a guard.
+KNOWN_LAYOUTS = frozenset({
+    "title",
+    "content",
+    "two_column",
+    "three_column",
+    "grid",
+    "quote",
+    "stats",
+    "cta",
+    "timeline",
+    "comparison",
+    "hero",
+    "infographic",
+    "callout",
+})
 
-# Legacy slide types that the model might still emit; postprocessing folds them
-# into HTML via the converter so we never lose data even on contract drift.
-VALID_SLIDE_TYPES = VALID_LAYOUTS
+# Back-compat aliases — older callers/tests may still import these names.
+VALID_LAYOUTS = KNOWN_LAYOUTS
+VALID_SLIDE_TYPES = KNOWN_LAYOUTS
+
+CHART_TYPES = frozenset({"bar", "column", "line", "area", "pie", "doughnut", "radar"})
+
+_LAYOUT_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 
 def parse_json(raw: str) -> dict:
@@ -81,16 +101,17 @@ def _sanitize_chart(chart: Any) -> dict | None:
     """Validate and clean a chart object; return None if malformed."""
     if not isinstance(chart, dict):
         return None
-    if chart.get("type") != "bar":
+    chart_type = chart.get("type")
+    if not isinstance(chart_type, str) or chart_type not in CHART_TYPES:
         return None
     data = chart.get("data")
     if not isinstance(data, list) or len(data) < 2:
         return None
     clean_data = []
-    for point in data[:8]:
+    for point in data[:16]:
         if not isinstance(point, dict):
             continue
-        label = str(point.get("label", "")).strip()[:24]
+        label = str(point.get("label", "")).strip()[:32]
         try:
             value = float(point["value"])
         except (KeyError, TypeError, ValueError):
@@ -99,17 +120,29 @@ def _sanitize_chart(chart: Any) -> dict | None:
             clean_data.append({"label": label, "value": value})
     if len(clean_data) < 2:
         return None
-    result: dict = {"type": "bar", "data": clean_data}
+    result: dict = {"type": chart_type, "data": clean_data}
     if isinstance(chart.get("title"), str) and chart["title"].strip():
         result["title"] = chart["title"].strip()
     return result
 
 
+def _sanitize_layout(value: Any) -> str | None:
+    """Normalize a free-form layout hint to a safe token, or None if unusable."""
+    if not isinstance(value, str):
+        return None
+    token = value.strip().lower().replace(" ", "_")
+    if not token:
+        return None
+    if not _LAYOUT_TOKEN_RE.match(token):
+        return None
+    return token
+
+
 def _sanitize_metadata(metadata: Any, *, slide_index: int, default_title: str = "") -> dict:
     md: dict[str, Any] = {}
     if isinstance(metadata, dict):
-        layout = metadata.get("layout")
-        if isinstance(layout, str) and layout in VALID_LAYOUTS:
+        layout = _sanitize_layout(metadata.get("layout"))
+        if layout:
             md["layout"] = layout
         title = metadata.get("title")
         if isinstance(title, str) and title.strip():
@@ -122,7 +155,7 @@ def _sanitize_metadata(metadata: Any, *, slide_index: int, default_title: str = 
             md["image_ref"] = image_ref.strip()[:64]
         notes = metadata.get("notes")
         if isinstance(notes, str) and notes.strip():
-            md["notes"] = notes.strip()[:600]
+            md["notes"] = notes.strip()[:1200]
         chart = _sanitize_chart(metadata.get("chart"))
         if chart:
             md["chart"] = chart

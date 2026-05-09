@@ -12,7 +12,31 @@ logger = logging.getLogger(__name__)
 
 
 CLAUDE_MODEL = "claude-sonnet-4-5"
-CLAUDE_MAX_TOKENS = 4096
+# Default ceiling for Anthropic API ``max_tokens``. Operators can override via
+# admin (GenerationSettings.api_max_tokens) or the Django setting
+# ``GENERATION_API_MAX_TOKENS``. Larger values let the model emit richer,
+# more visually complex slide HTML.
+CLAUDE_MAX_TOKENS = 16384
+# Hard bounds for the override; we don't want a typo to crash the request or
+# blow up the bill.
+CLAUDE_MAX_TOKENS_FLOOR = 1024
+CLAUDE_MAX_TOKENS_CEILING = 32000
+
+
+def _resolve_max_tokens(settings_obj: GenerationSettings) -> int:
+    """Resolve the effective max_tokens for an Anthropic API call."""
+    override = (getattr(settings, "GENERATION_API_MAX_TOKENS", None))
+    raw: int | None
+    if override is not None:
+        try:
+            raw = int(override)
+        except (TypeError, ValueError):
+            raw = None
+    else:
+        raw = getattr(settings_obj, "api_max_tokens", None)
+    if not raw:
+        raw = CLAUDE_MAX_TOKENS
+    return max(CLAUDE_MAX_TOKENS_FLOOR, min(int(raw), CLAUDE_MAX_TOKENS_CEILING))
 
 
 def get_generation_settings() -> GenerationSettings:
@@ -149,7 +173,7 @@ def _call_claude_api(system_prompt: str, user_prompt: str, image_sources=None) -
     content.append({"type": "text", "text": user_prompt})
     message = client.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=CLAUDE_MAX_TOKENS,
+        max_tokens=_resolve_max_tokens(get_generation_settings()),
         system=system_prompt,
         messages=[
             {
