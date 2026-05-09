@@ -27,6 +27,7 @@ import {
   newSlideSid,
 } from "@/lib/slideHistory";
 import { DeckSlideThumbCanvas, getSlideBulletMarker, getSlideBullets, getSlideStats, getSlideSubtitle, getSlideTitle } from "@/lib/slidePreview";
+import { buildRefineSlidePayload, getSafeSlideHtml, isHtmlSlide } from "@/lib/slideHtml";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -780,7 +781,7 @@ function ExistingPresentationView({ id, publicView = false }) {
           method: "POST",
           body: JSON.stringify({
             presentation_title: presentation.title || "Презентация",
-            slides,
+            slides: slides.map(buildRefineSlidePayload),
             instruction,
             presentation_id: presentation.id,
             mode,
@@ -862,7 +863,7 @@ function ExistingPresentationView({ id, publicView = false }) {
         const { slide } = await apiJson("/api/refine-slide/", {
           method: "POST",
           body: JSON.stringify({
-            slide: baseSlide,
+            slide: buildRefineSlidePayload(baseSlide),
             instruction,
             presentation_title: presentation.title || "Презентация",
             presentation_id: presentation.id,
@@ -4063,9 +4064,12 @@ function SlideCanvas({
   const pageCounterCornerExtraPct = 4;
   const pageCounterRightPct = slidePadPct + pageCounterCornerExtraPct;
 
-  const icon = typeof slide?.icon === "string" ? slide.icon.trim() : "";
-  const chart = slide?.chart && Array.isArray(slide.chart.data) && slide.chart.data.length >= 2 ? slide.chart : null;
-  const slideImageSrc = slide?.image === true && assets?.images?.[0]
+  const isHtml = isHtmlSlide(slide);
+  const slideMetaIcon = typeof slide?.metadata?.icon === "string" ? slide.metadata.icon.trim() : "";
+  const icon = isHtml ? slideMetaIcon : (typeof slide?.icon === "string" ? slide.icon.trim() : "");
+  const chartFromMeta = isHtml ? slide?.metadata?.chart : slide?.chart;
+  const chart = chartFromMeta && Array.isArray(chartFromMeta.data) && chartFromMeta.data.length >= 2 ? chartFromMeta : null;
+  const slideImageSrc = !isHtml && slide?.image === true && assets?.images?.[0]
     ? `data:${assets.images[0].media_type};base64,${assets.images[0].data_b64}`
     : null;
   const hasRightPanel = !!(chart || slideImageSrc || stats.length > 0);
@@ -4149,6 +4153,14 @@ function SlideCanvas({
         </div>
       </div>
 
+      {isHtml ? (
+        <div
+          className="slide-html-canvas"
+          style={{ flex: 1, minHeight: 0, color: preset.ink, "--accent": preset.accent, fontSize: sp(1.6, 14, 22) }}
+          dangerouslySetInnerHTML={{ __html: getSafeSlideHtml(slide, { assets }) }}
+        />
+      ) : (
+      <>
       {/* Main grid: text left, visual panel right */}
       <div style={{ display: "grid", gridTemplateColumns: hasRightPanel ? "54% 42%" : "1fr", gap: "4%", alignItems: "center", flex: 1, minHeight: 0 }}>
         <div style={{ minWidth: 0 }}>
@@ -4296,7 +4308,7 @@ function SlideCanvas({
         )}
       </div>
       {/* B6: two_column layout */}
-      {slide?.type === "two_column" && slide?.content && typeof slide.content === "object" && (
+      {!isHtml && slide?.type === "two_column" && slide?.content && typeof slide.content === "object" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4%", marginTop: "2%" }}>
           {["left", "right"].map((side) => {
             const col = slide.content[side];
@@ -4331,6 +4343,8 @@ function SlideCanvas({
             );
           })}
         </div>
+      )}
+      </>
       )}
       {showCornerBR || showWmBR ? (
         <div

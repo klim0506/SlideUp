@@ -5,6 +5,13 @@ from rest_framework import serializers
 from apps.billing.utils import is_pro_plan
 
 from .models import ColorScheme, Presentation
+from .slide_html import (
+    PRESENTATION_FORMAT_HTML_V1,
+    PRESENTATION_FORMAT_JSON_V1,
+    SLIDE_SID_KEY,
+    coerce_html_slide,
+    sanitize_slide_html,
+)
 from .themes import (
     CUSTOM_THEME_ID,
     normalize_theme,
@@ -43,9 +50,48 @@ def coerce_presentation_theme(user, theme: str | None, theme_custom):
     return tnorm, None
 
 
+def _sanitize_incoming_slides(value, instance):
+    """Coerce slides PATCH'ed by the client into the canonical html shape.
+
+    Accepts either the new ``[{html, metadata}, …]`` shape or the legacy
+    structured shape (for back-compat with old clients still in flight); both
+    are normalized to ``[{html, metadata, _sid?}, …]`` and html is sanitized.
+    The legacy structured shape is also accepted when the presentation row is
+    still ``json_v1`` and the client sends back the same shape — in that case
+    we keep it as-is so editing existing decks does not auto-migrate them.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise serializers.ValidationError("Slides must be a list.")
+
+    legacy_keep = (
+        instance is not None
+        and getattr(instance, "presentation_format", PRESENTATION_FORMAT_JSON_V1)
+        == PRESENTATION_FORMAT_JSON_V1
+        and all(isinstance(s, dict) and "html" not in s for s in value)
+    )
+    if legacy_keep:
+        return value
+
+    out = []
+    for s in value:
+        coerced = coerce_html_slide(s)
+        # coerce_html_slide already sanitizes; double-check by re-sanitizing
+        # in case the client tried to smuggle a payload with already-set html.
+        coerced["html"] = sanitize_slide_html(coerced.get("html", ""))
+        if isinstance(s, dict):
+            sid = s.get(SLIDE_SID_KEY)
+            if isinstance(sid, str) and sid:
+                coerced[SLIDE_SID_KEY] = sid
+        out.append(coerced)
+    return out
+
+
 class PresentationSerializer(serializers.ModelSerializer):
     slide_count = serializers.SerializerMethodField()
     slide_histories = serializers.JSONField(required=False)
+    slides = serializers.JSONField(required=False)
 
     class Meta:
         model = Presentation
@@ -55,6 +101,7 @@ class PresentationSerializer(serializers.ModelSerializer):
             "style",
             "theme",
             "theme_custom",
+            "presentation_format",
             "slides",
             "slides_unlocked",
             "slide_histories",
@@ -63,7 +110,15 @@ class PresentationSerializer(serializers.ModelSerializer):
             "created_at",
             "slide_count",
         )
-        read_only_fields = ("id", "created_at", "slide_count", "assets", "style", "slides_unlocked")
+        read_only_fields = (
+            "id",
+            "created_at",
+            "slide_count",
+            "assets",
+            "style",
+            "slides_unlocked",
+            "presentation_format",
+        )
 
     def validate_slide_histories(self, value):
         if value is None:
@@ -72,8 +127,16 @@ class PresentationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Ожидается объект JSON (словарь).")
         return value
 
+    def validate_slides(self, value):
+        return _sanitize_incoming_slides(value, self.instance)
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        if "slides" in attrs and self.instance is not None:
+            # If the client sent the new html shape into a legacy json_v1 row,
+            # promote the row's format. Pure-legacy edits leave it untouched.
+            if any(isinstance(s, dict) and "html" in s for s in attrs["slides"]):
+                attrs["presentation_format"] = PRESENTATION_FORMAT_HTML_V1
         if not self.instance:
             return attrs
         if "theme" not in attrs and "theme_custom" not in attrs:
@@ -96,13 +159,15 @@ class PresentationSerializer(serializers.ModelSerializer):
         return attrs
 
     def get_slide_count(self, obj):
-        """Return the number of slides stored in the presentation JSON payload."""
+        """Return the number of slides stored on the presentation."""
         return len(obj.slides) if isinstance(obj.slides, list) else 0
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
         if data.get("slide_histories") is None:
             data["slide_histories"] = {}
+        if not data.get("presentation_format"):
+            data["presentation_format"] = PRESENTATION_FORMAT_JSON_V1
         return data
 
     def validate_is_public(self, value):

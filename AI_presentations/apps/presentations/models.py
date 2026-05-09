@@ -18,6 +18,11 @@ class Presentation(models.Model):
     style = models.CharField(max_length=32, default="pitch")
     theme = models.CharField(max_length=32, default="light")
     theme_custom = models.JSONField(null=True, blank=True)
+    presentation_format = models.CharField(
+        max_length=16,
+        default="json_v1",
+        help_text="Slide storage shape: json_v1 (legacy structured) or html_v1 (canonical HTML).",
+    )
     slides = models.JSONField(default=list, blank=True)
     slides_unlocked = models.PositiveIntegerField(
         null=True,

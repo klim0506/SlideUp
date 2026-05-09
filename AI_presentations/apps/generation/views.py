@@ -9,44 +9,26 @@ from rest_framework.views import APIView
 from apps.billing.models import UsageLog
 from apps.billing.utils import check_and_spend_slides, check_and_spend_slides_up_to, increment_usage
 from apps.presentations.models import Presentation
+from apps.presentations.slide_html import PRESENTATION_FORMAT_HTML_V1, SLIDE_SID_KEY, coerce_html_slide
 from apps.presentations.themes import sanitize_generation_theme
 
 from .claude import ClaudePresentationClient
 from .claude_client import call_claude, get_claude_mode
 from .models import GenerationJob
-from .postprocessing import parse_json, postprocess
-from .prompts import KNOWN_STYLES, SYSTEM_PROMPT, build_prompt
+from .postprocessing import postprocess, postprocess_single_slide
+from .prompts import (
+    DECK_ASSIST_SYSTEM_PROMPT,
+    KNOWN_STYLES,
+    NEW_SLIDE_SYSTEM_PROMPT,
+    SINGLE_SLIDE_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
+    build_prompt,
+)
 from .serializers import GenerationRequestSerializer
 from .source_material import process_uploaded_source
 
 
 MAX_CLAUDE_JSON_ATTEMPTS = 3
-
-SINGLE_SLIDE_SYSTEM_PROMPT = (
-    "You are Slidegen, an expert presentation editor. "
-    "Edit exactly one slide according to the user's instruction. "
-    "Return only valid JSON for one slide object. "
-    "The slide must include type, title, bullets, and content fields."
-)
-
-NEW_SLIDE_SYSTEM_PROMPT = (
-    "You are Slidegen, an expert presentation architect. "
-    "Create exactly one NEW slide that fits the existing deck context and the user's instruction. "
-    "Return only valid JSON for one slide object, not a full deck. "
-    "The slide must include type, title, bullets, and content fields. "
-    "Do not include markdown fences, comments, or explanations."
-)
-
-DECK_ASSIST_SYSTEM_PROMPT = (
-    "You are Slidegen, an expert presentation editor. "
-    "You receive the presentation title, an instruction, and the current slides as JSON. "
-    "Return exactly one JSON object with keys title (string) and slides (array). "
-    "You MUST keep the same number of slides in the same order as the input slides array. "
-    "Do not add, remove, or merge slides. "
-    "Each slide must include type, title, bullets, and content fields. "
-    "Apply the user's instruction across the whole deck (tone, length, structure, language, clarity). "
-    "Return only valid JSON — no markdown fences, comments, or explanations."
-)
 
 
 def _ensure_session_key(request) -> str:
@@ -73,7 +55,7 @@ def _retry_prompt(user_prompt, error, attempt) -> str:
     """Add validation feedback for a Claude retry without losing the original task."""
     return (
         f"{user_prompt}\n\n"
-        f"Retry attempt {attempt}: the previous response failed JSON validation: {error}. "
+        f"Retry attempt {attempt}: the previous response failed validation: {error}. "
         "Return a corrected response as one valid JSON object only. "
         "Do not include markdown fences, comments, or explanations."
     )
@@ -95,28 +77,30 @@ def _call_claude_with_json_retry(
             return parser(raw)
         except ValueError as exc:
             last_error = exc
-    raise ValueError(f"Claude returned invalid JSON after {max_attempts} attempts: {last_error}")
-
-
-def _postprocess_refined_slide(raw, presentation_title):
-    """Parse and validate one refined slide through the shared deck postprocessor."""
-    refined_slide = parse_json(raw)
-    return postprocess(
-        json.dumps(
-            {
-                "title": presentation_title,
-                "slides": [refined_slide],
-            },
-            ensure_ascii=False,
-        )
-    )["slides"][0]
+    raise ValueError(f"Claude returned invalid response after {max_attempts} attempts: {last_error}")
 
 
 def _strip_internal_slide_keys(slide):
     """Remove keys that are only for client persistence (stable slide id)."""
     if not isinstance(slide, dict):
         return slide
-    return {k: v for k, v in slide.items() if k != "_sid"}
+    return {k: v for k, v in slide.items() if k != SLIDE_SID_KEY}
+
+
+def _slide_for_prompt(slide):
+    """Coerce a slide payload into html shape and strip client-only keys before sending to the model."""
+    coerced = coerce_html_slide(slide)
+    return _strip_internal_slide_keys(coerced)
+
+
+def _refined_slide_parser(raw, *, original_slide):
+    """Parse a refined slide and preserve the stable slide id from the source slide."""
+    refined = postprocess_single_slide(raw)
+    if isinstance(original_slide, dict):
+        sid = original_slide.get(SLIDE_SID_KEY)
+        if isinstance(sid, str) and sid:
+            refined[SLIDE_SID_KEY] = sid
+    return refined
 
 
 def _postprocess_deck_assist(raw, presentation_title, expected_slide_count):
@@ -128,6 +112,8 @@ def _postprocess_deck_assist(raw, presentation_title, expected_slide_count):
             f"The model must return exactly {expected_slide_count} slides in the same order; "
             f"got {len(slides) if isinstance(slides, list) else 'non-list'}."
         )
+    if not data.get("title"):
+        data["title"] = presentation_title
     return data
 
 
@@ -233,7 +219,13 @@ class GeneratePresentationView(APIView):
         try:
             data = _call_claude_with_json_retry(
                 SYSTEM_PROMPT,
-                build_prompt(topic=topic, slides_count=slides_count, context=context_extra, has_image=bool(image_sources), style=style),
+                build_prompt(
+                    topic=topic,
+                    slides_count=slides_count,
+                    context=context_extra,
+                    has_image=bool(image_sources),
+                    style=style,
+                ),
                 lambda raw: postprocess(raw, expected_slides_count=slides_count),
                 image_sources=image_sources,
             )
@@ -266,6 +258,7 @@ class GeneratePresentationView(APIView):
             title=data["title"],
             style=style,
             theme=theme,
+            presentation_format=PRESENTATION_FORMAT_HTML_V1,
             slides=deck_slides,
             slides_unlocked=slides_unlocked,
             assets=assets,
@@ -288,6 +281,7 @@ class GeneratePresentationView(APIView):
         body = {
             "id": str(presentation.id),
             "title": presentation.title,
+            "presentation_format": presentation.presentation_format,
             "slides": presentation.slides,
             "theme": presentation.theme,
             "style": presentation.style,
@@ -302,7 +296,7 @@ class RefineSlideView(APIView):
     permission_classes = []
 
     def post(self, request):
-        """Refine a single slide using Claude and return the sanitized slide object."""
+        """Refine a single slide using Claude and return the sanitized html slide."""
         started_at = timezone.now()
         slide = request.data.get("slide")
         instruction = request.data.get("instruction", "")
@@ -356,23 +350,19 @@ class RefineSlideView(APIView):
                 )
                 return Response(usage_check, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
+        slide_for_prompt = _slide_for_prompt(slide)
         user_prompt = (
             f"Presentation title: {presentation_title}\n"
             f"Instruction: {instruction}\n"
-            f"Slide JSON: {json.dumps(_strip_internal_slide_keys(slide) if isinstance(slide, dict) else slide, ensure_ascii=False)}"
+            f"Current slide JSON ({{html, metadata}}): "
+            f"{json.dumps(slide_for_prompt, ensure_ascii=False)}"
         )
-
-        def refine_parser(raw):
-            out = _postprocess_refined_slide(raw, presentation_title)
-            if isinstance(slide, dict) and slide.get("_sid") and isinstance(out, dict):
-                out = {**out, "_sid": slide["_sid"]}
-            return out
 
         try:
             refined = _call_claude_with_json_retry(
                 SINGLE_SLIDE_SYSTEM_PROMPT,
                 user_prompt,
-                refine_parser,
+                lambda raw: _refined_slide_parser(raw, original_slide=slide),
             )
         except ValueError as exc:
             _finish_job(
@@ -468,10 +458,8 @@ class AssistDeckView(APIView):
                 )
                 return Response(usage_check, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-        stripped_slides = [
-            _strip_internal_slide_keys(s) if isinstance(s, dict) else s for s in slides
-        ]
-        slide_count = len(stripped_slides)
+        prompt_slides = [_slide_for_prompt(s) for s in slides]
+        slide_count = len(prompt_slides)
 
         if mode == "append_slide":
             user_prompt = (
@@ -479,15 +467,15 @@ class AssistDeckView(APIView):
                 f"Instruction for the new slide: {instruction}\n"
                 "Create exactly ONE additional slide that should be appended after the current deck. "
                 "Use the current deck only as context; do not rewrite existing slides.\n"
-                f"Current deck JSON:\n"
-                f"{json.dumps({'title': presentation_title, 'slides': stripped_slides}, ensure_ascii=False)}"
+                f"Current deck JSON ({{title, slides:[{{html, metadata}}]}}):\n"
+                f"{json.dumps({'title': presentation_title, 'slides': prompt_slides}, ensure_ascii=False)}"
             )
 
             try:
                 new_slide = _call_claude_with_json_retry(
                     NEW_SLIDE_SYSTEM_PROMPT,
                     user_prompt,
-                    lambda raw: _postprocess_refined_slide(raw, presentation_title),
+                    postprocess_single_slide,
                 )
             except ValueError as exc:
                 _finish_job(
@@ -527,26 +515,24 @@ class AssistDeckView(APIView):
             f"Presentation title: {presentation_title}\n"
             f"Required slide count (unchanged): {slide_count}\n"
             f"Instruction: {instruction}\n"
-            f"Current deck JSON:\n"
-            f"{json.dumps({'title': presentation_title, 'slides': stripped_slides}, ensure_ascii=False)}"
+            f"Current deck JSON ({{title, slides:[{{html, metadata}}]}}):\n"
+            f"{json.dumps({'title': presentation_title, 'slides': prompt_slides}, ensure_ascii=False)}"
         )
 
         def parser(raw):
             data = _postprocess_deck_assist(raw, presentation_title, slide_count)
             merged_slides = []
             for i, s in enumerate(data.get("slides", [])):
-                if i < len(slides) and isinstance(slides[i], dict) and slides[i].get("_sid"):
+                if i < len(slides) and isinstance(slides[i], dict) and slides[i].get(SLIDE_SID_KEY):
                     if isinstance(s, dict):
                         merged = dict(s)
-                        merged["_sid"] = slides[i]["_sid"]
+                        merged[SLIDE_SID_KEY] = slides[i][SLIDE_SID_KEY]
                         merged_slides.append(merged)
                     else:
                         merged_slides.append(s)
                 else:
                     merged_slides.append(s)
             data["slides"] = merged_slides
-            if not data.get("title"):
-                data["title"] = presentation_title
             return data
 
         try:
@@ -588,6 +574,10 @@ class AssistDeckView(APIView):
         )
 
         return Response(
-            {"title": deck.get("title", presentation_title), "slides": deck.get("slides", [])},
+            {
+                "title": deck.get("title", presentation_title),
+                "slides": deck.get("slides", []),
+                "presentation_format": PRESENTATION_FORMAT_HTML_V1,
+            },
             status=status.HTTP_200_OK,
         )

@@ -34,6 +34,7 @@ def _presentation_data(presentation):
         "title": presentation.title,
         "theme": presentation.theme,
         "theme_custom": presentation.theme_custom,
+        "presentation_format": getattr(presentation, "presentation_format", "json_v1"),
         "slides": _slides_for_export(presentation),
         "assets": presentation.assets,
     }
