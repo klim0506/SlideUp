@@ -45,6 +45,7 @@ build/
 
 # Browser smoke / Playwright artifacts
 .playwright-mcp/
+.playwright-cli/
 browser-smoke/
 browser-smoke-profile*/
 playwright-report/
