@@ -3,7 +3,7 @@ import { AppHeader } from "@/components/AppHeader";
 import AuthModal from "@/components/AuthModal";
 import SiteFooter from "@/components/SiteFooter";
 import { Icon } from "@/lib/design";
-import { apiJson, getAccessToken, getMe, navigate } from "@/lib/api";
+import { apiJson, createBlankPresentation, getAccessToken, getMe, navigate } from "@/lib/api";
 import { studentUsageSlidesSummary } from "@/lib/planLimits";
 
 const PACKS = [
@@ -19,7 +19,7 @@ const PLANS = [
     monthly: "490 ₽",
     yearly: "4 469 ₽",
     slides: studentUsageSlidesSummary(),
-    description: "Для учебы, личных проектов и регулярных черновиков.",
+    description: "Для учёбы, личных проектов и регулярных черновиков.",
   },
   {
     id: "pro",
@@ -33,7 +33,7 @@ const PLANS = [
 
 const DEMO_LOG = [
   { date: "2026-05-05", action_display: "Генерация", presentation_title: "Стратегия роста", slides_spent: 12 },
-  { date: "2026-05-03", action_display: "Экспорт PDF", presentation_title: "Квартальный отчет Q1", slides_spent: 0 },
+  { date: "2026-05-03", action_display: "Экспорт PDF", presentation_title: "Квартальный отчёт Q1", slides_spent: 0 },
   { date: "2026-05-01", action_display: "Правка слайда", presentation_title: "Онбординг команды", slides_spent: 1 },
 ];
 
@@ -60,6 +60,7 @@ export default function Usage() {
   const [paying, setPaying] = useState("");
   const [error, setError] = useState("");
   const [authOpen, setAuthOpen] = useState(!getAccessToken());
+  const [createBusy, setCreateBusy] = useState(false);
   const [period, setPeriod] = useState("yearly");
 
   const slidesPercent = useMemo(() => {
@@ -100,6 +101,21 @@ export default function Usage() {
     loadUsage();
   }, []);
 
+  async function createPresentation() {
+    if (createBusy) return;
+    setCreateBusy(true);
+    setError("");
+    try {
+      const deck = await createBlankPresentation();
+      navigate(`/presentation/${deck.id}`);
+    } catch (err) {
+      if (err.status === 401) setAuthOpen(true);
+      else setError(err.message || "Не получилось создать презентацию — попробуйте ещё раз.");
+    } finally {
+      setCreateBusy(false);
+    }
+  }
+
   async function createPayment(payload, paymentId) {
     setPaying(paymentId);
     setError("");
@@ -127,11 +143,11 @@ export default function Usage() {
               Понятная оплата за готовые презентации
             </h1>
             <p style={{ color: "var(--ink-2)", maxWidth: 620, margin: "14px 0 0", fontSize: 17 }}>
-              SlideUp считает слайды, показывает остаток и дает выбрать: подписка на месяц, выгодная годовая оплата или разовый пакет.
+              SlideUp считает слайды, показывает остаток и даёт выбрать: подписка на месяц, выгодная годовая оплата или разовый пакет.
             </p>
           </div>
-          <button onClick={() => navigate("/create")} className="su-btn su-btn-accent">
-            <Icon name="plus" size={15} /> Создать презентацию
+          <button onClick={() => void createPresentation()} disabled={createBusy} className="su-btn su-btn-accent">
+            <Icon name={createBusy ? "loader" : "plus"} size={15} /> {createBusy ? "Создаём..." : "Создать презентацию"}
           </button>
         </div>
 

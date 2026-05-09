@@ -29,7 +29,7 @@ export const INTERNAL_LINKS = [
   { label: "Как работает", href: "/#how" },
   { label: "Возможности", href: "/#features" },
   { label: "Тарифы", href: "/#pricing" },
-  { label: "Кабинет", href: "/dashboard" },
+  { label: "Кабинет", href: "/presentation" },
 ];
 
 export const DOCUMENT_LINKS = [

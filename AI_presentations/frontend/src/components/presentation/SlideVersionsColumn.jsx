@@ -1,5 +1,6 @@
 import { Icon } from "@/lib/design";
 import { DeckSlideThumbCanvas } from "@/lib/slidePreview";
+import { useEffect, useState } from "react";
 
 function VersionThumb({
   slide,
@@ -8,6 +9,7 @@ function VersionThumb({
   preset,
   active,
   onClick,
+  onContextMenu,
   children,
   title,
   disabled = false,
@@ -21,6 +23,7 @@ function VersionThumb({
       type="button"
       title={title}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       disabled={disabled}
       style={{
         width: 68,
@@ -69,6 +72,7 @@ export function SlideVersionsColumn({
   slidesLen,
   preset,
   onActivate,
+  onDeleteVersion,
   onPromptAi,
   localAiBusy,
   busy,
@@ -77,6 +81,28 @@ export function SlideVersionsColumn({
 }) {
   const newestIndex = versionsChrono.length - 1;
   const isBelow = variant === "below";
+  const [contextMenu, setContextMenu] = useState(null);
+  const canDeleteVersion = !publicView && !busy && versionsChrono.length > 1 && typeof onDeleteVersion === "function";
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [contextMenu]);
+
+  function openVersionContextMenu(event, versionIndex) {
+    if (!canDeleteVersion) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ x: event.clientX, y: event.clientY, versionIndex });
+  }
 
   const aiThumb = !publicView ? (
     <div style={{ position: "relative", flexShrink: 0 }}>
@@ -116,12 +142,13 @@ export function SlideVersionsColumn({
         total={slidesLen}
         preset={preset}
         active={active}
-        disabled={busy || active}
+        disabled={busy || publicView}
         title={`Версия v${i + 1}`}
         versionLabel={`v${i + 1}`}
         onClick={() => {
           if (!publicView && !active && !busy && onActivate) onActivate(i);
         }}
+        onContextMenu={(event) => openVersionContextMenu(event, i)}
       />
     );
   });
@@ -147,18 +174,131 @@ export function SlideVersionsColumn({
     </div>
   );
 
+  const contextMenuNode = contextMenu ? (
+    <div
+      role="menu"
+      style={{
+        position: "fixed",
+        left: contextMenu.x,
+        top: contextMenu.y,
+        transform: "translate(0, calc(-100% - 6px))",
+        zIndex: 120,
+        minWidth: 170,
+        padding: 6,
+        borderRadius: 10,
+        border: "1px solid var(--line)",
+        background: "var(--surface)",
+        boxShadow: "0 12px 26px rgba(0,0,0,.16)",
+      }}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          const index = contextMenu.versionIndex;
+          setContextMenu(null);
+          onDeleteVersion?.(index);
+        }}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "8px 10px",
+          borderRadius: 8,
+          background: "transparent",
+          color: "#b91c1c",
+          fontSize: 13,
+          fontWeight: 700,
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+      >
+        <Icon name="trash-2" size={14} stroke={2} />
+        Удалить версию
+      </button>
+    </div>
+  ) : null;
+
   if (isBelow) {
     return (
       <div
+        className="slide-version-pillbar"
         style={{
           flexShrink: 0,
           width: "100%",
-          marginTop: 8,
-          paddingTop: 8,
+          marginTop: 0,
+          paddingTop: 0,
           minWidth: 0,
         }}
       >
-        {strip}
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 2,
+            padding: 4,
+            borderRadius: 999,
+            border: "1px solid var(--line)",
+            background: "rgba(255,255,255,.94)",
+            boxShadow: "0 2px 8px rgba(15,31,58,.08)",
+          }}
+        >
+          {versionsChrono.map((entry, i) => {
+            const active = i === newestIndex;
+            return (
+              <button
+                key={`${entry.at}-${i}`}
+                type="button"
+                disabled={busy || publicView}
+                onClick={() => {
+                  if (!publicView && !active && !busy && onActivate) onActivate(i);
+                }}
+                onContextMenu={(event) => openVersionContextMenu(event, i)}
+                title={`Версия v${i + 1}`}
+                style={{
+                  minWidth: 42,
+                  height: 30,
+                  padding: "0 12px",
+                  borderRadius: 999,
+                  background: active ? "var(--accent)" : "transparent",
+                  color: active ? "var(--accent-fg)" : "var(--ink-3)",
+                  fontSize: 13,
+                  fontWeight: 760,
+                  lineHeight: 1,
+                  cursor: busy || publicView ? "default" : "pointer",
+                }}
+              >
+                v{i + 1}
+              </button>
+            );
+          })}
+          {!publicView ? (
+            <button
+              type="button"
+              disabled={busy || localAiBusy}
+              onClick={() => {
+                if (!busy && !localAiBusy) onPromptAi?.(newestIndex >= 0 ? newestIndex : 0);
+              }}
+              title="Новый вариант"
+              style={{
+                minWidth: 36,
+                height: 30,
+                borderRadius: 999,
+                display: "grid",
+                placeItems: "center",
+                color: localAiBusy ? "var(--ink-4)" : "var(--ink-3)",
+                cursor: busy || localAiBusy ? "not-allowed" : "pointer",
+              }}
+            >
+              <Icon name={localAiBusy ? "loader" : "refresh-cw"} size={15} />
+            </button>
+          ) : null}
+        </div>
+        {contextMenuNode}
       </div>
     );
   }
@@ -174,6 +314,7 @@ export function SlideVersionsColumn({
       }}
     >
       {strip}
+      {contextMenuNode}
     </div>
   );
 }

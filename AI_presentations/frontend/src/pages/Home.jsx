@@ -8,6 +8,7 @@ import UpsellModal from "@/components/UpsellModal";
 import { freeLandingFeatureItems, studentLandingFeatureItems } from "@/lib/planLimits";
 import { setPendingSource } from "@/lib/genHandoff";
 import { getMe, logout, navigate } from "@/lib/api";
+import { HERO_EXAMPLE_PROMPTS, useTypewriterPlaceholder } from "@/lib/useTypewriterPlaceholder";
 
 const HERO_AUDIENCES = ["дизайнеры", "предприниматели", "менеджеры", "студенты", "компании"];
 
@@ -159,7 +160,7 @@ export default function Home({ workspaceMode = false }) {
       return;
     }
 
-    navigate("/dashboard");
+    navigate("/presentation");
   }
 
   function closeAuthModal() {
@@ -171,7 +172,7 @@ export default function Home({ workspaceMode = false }) {
   return (
     <div className={workspaceMode ? "su-page editor-dark" : "su-page"}>
       {workspaceMode ? (
-        <AppHeader user={user} active="library" onLibrary={() => navigate("/dashboard")} onLogout={() => logout()} />
+        <AppHeader user={user} active="library" onLibrary={() => navigate("/presentation")} onLogout={() => logout()} />
       ) : (
         <SiteHeader user={user} onLogin={() => { setAuthIntent("login"); setAuthOpen(true); }} />
       )}
@@ -190,8 +191,8 @@ export default function Home({ workspaceMode = false }) {
         setDocFile={setDocFile}
         fileInputRef={fileInputRef}
         createErr={createErr}
+        onClearCreateErr={() => setCreateErr("")}
         isLoggedIn={Boolean(user)}
-        canSubmitCreate={isHeroPromptValid(prompt)}
         onRequestMoreSlidesLogin={(nextCount) => {
           pendingSlideCountAfterAuthRef.current = nextCount;
           setAuthIntent("continue-project");
@@ -217,7 +218,7 @@ function CreateHeader() {
         <Icon name="logo" size={26} stroke={2.2} style={{ color: "var(--accent)" }} />
         <span>SlideUp</span>
       </div>
-      <button type="button" className="su-btn su-btn-ghost" style={{ fontSize: 15 }} onClick={() => navigate("/dashboard")}>
+      <button type="button" className="su-btn su-btn-ghost" style={{ fontSize: 15 }} onClick={() => navigate("/presentation")}>
         <Icon name="doc" size={14} />
         Презентации
       </button>
@@ -225,37 +226,59 @@ function CreateHeader() {
   );
 }
 
-function Hero({
-  workspaceMode = false,
+/** Тот же блок, что под заголовком на лендинге: `.hero-composer`. */
+export function LandingHeroComposer({
   prompt,
   setPrompt,
   slideCount,
   setSlideCount,
   styleId,
   setStyleId,
-  presentationStyle,
-  setPresentationStyle,
-  onCreate,
   docFile,
   setDocFile,
   fileInputRef,
   createErr,
+  onCreate,
+  submitBusy = false,
   isLoggedIn,
-  canSubmitCreate,
   onRequestMoreSlidesLogin,
   userPlan = "free",
   onLockedStyle,
+  onClearCreateErr,
+  extraHeroActions = null,
+  /** На лендинге включён; на экранах «новая презентация» — без микрофона. */
+  showSpeech = true,
 }) {
   const speechSupported =
+    showSpeech &&
     typeof window !== "undefined" &&
     !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   const recognitionRef = useRef(null);
   const speechBaseRef = useRef("");
   const [speechListening, setSpeechListening] = useState(false);
-  const activeStyleName = (STYLE_PRESETS.find((preset) => preset.id === styleId) || STYLE_PRESETS[0]).name;
-  const activePresentationStyleName = (PRESENTATION_STYLES.find((s) => s.id === presentationStyle) || PRESENTATION_STYLES[0]).name;
+  const textareaRef = useRef(null);
+  const animatedPlaceholder = useTypewriterPlaceholder(HERO_EXAMPLE_PROMPTS, {
+    paused: prompt.length > 0 || submitBusy,
+  });
 
   useEffect(() => {
+    // Курсор сразу в поле — чтобы можно было начать печатать без дополнительных кликов.
+    if (submitBusy) return;
+    const ta = textareaRef.current;
+    if (!ta) return;
+    if (document.activeElement && document.activeElement !== document.body && document.activeElement !== ta) {
+      // Не перехватываем фокус, если пользователь уже взаимодействует с другим полем.
+      return;
+    }
+    try {
+      ta.focus({ preventScroll: true });
+    } catch {
+      ta.focus();
+    }
+  }, [submitBusy]);
+
+  useEffect(() => {
+    if (!showSpeech) return undefined;
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return undefined;
 
@@ -272,6 +295,7 @@ function Hero({
       const spoken = chunk.trim();
       const base = speechBaseRef.current.trimEnd();
       const glue = base && spoken ? " " : "";
+      onClearCreateErr?.();
       setPrompt(base + glue + spoken);
     };
 
@@ -292,7 +316,7 @@ function Hero({
       }
       recognitionRef.current = null;
     };
-  }, [setPrompt]);
+  }, [setPrompt, onClearCreateErr, showSpeech]);
 
   function toggleSpeechInput() {
     const recognition = recognitionRef.current;
@@ -309,6 +333,124 @@ function Hero({
       setSpeechListening(false);
     }
   }
+
+  return (
+    <div className="hero-composer hero-composer--flat">
+      <textarea
+        ref={textareaRef}
+        value={prompt}
+        onChange={(event) => {
+          onClearCreateErr?.();
+          setPrompt(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !submitBusy) {
+            void onCreate();
+          }
+        }}
+        placeholder={animatedPlaceholder || "Например: стратегия запуска ИИ-продукта для B2B SaaS на 5 слайдов"}
+        className="hero-textarea"
+        disabled={submitBusy}
+        autoFocus
+      />
+
+      {docFile ? (
+        <div className="hero-file-chip">
+          <Icon name="paperclip" size={14} />
+          <span>{docFile.name}</span>
+          <button type="button" onClick={() => setDocFile(null)} aria-label="Убрать файл">
+            <Icon name="x" size={13} />
+          </button>
+        </div>
+      ) : null}
+
+      <div className="hero-controls">
+        <div className="hero-controls-start">
+          {speechSupported ? (
+            <button
+              type="button"
+              className="hero-mic-btn hero-icon-tooltip"
+              data-active={speechListening}
+              aria-label={speechListening ? "Остановить голосовой ввод" : "Голосовой ввод"}
+              aria-pressed={speechListening}
+              onClick={toggleSpeechInput}
+              disabled={submitBusy}
+            >
+              <Icon name="mic" size={18} stroke={2} />
+              <span className="hero-icon-tooltip__bubble" role="tooltip">
+                {speechListening ? "Стоп" : "Голос в текст"}
+              </span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="hero-attach-btn hero-icon-tooltip"
+            data-active={Boolean(docFile)}
+            aria-label="Вложить файл"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={submitBusy}
+          >
+            <Icon name="paperclip" size={18} stroke={2} />
+            <span className="hero-icon-tooltip__bubble" role="tooltip">
+              PDF, Word, PPTX, фото
+            </span>
+          </button>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={HERO_SOURCE_ACCEPT}
+          style={{ display: "none" }}
+          onChange={(event) => setDocFile(event.target.files?.[0] ?? null)}
+        />
+
+        <div className="hero-actions">
+          {extraHeroActions}
+          <StylePicker value={styleId} onChange={setStyleId} userPlan={userPlan} onLockedPreset={onLockedStyle} />
+          <Stepper
+            count={slideCount}
+            setCount={setSlideCount}
+            isLoggedIn={isLoggedIn}
+            onRequestMoreSlidesLogin={onRequestMoreSlidesLogin}
+          />
+          <button
+            type="button"
+            className="su-btn su-btn-accent hero-submit-btn"
+            disabled={submitBusy}
+            onClick={() => void onCreate()}
+          >
+            {submitBusy ? "Создаём…" : <>Создать <Icon name="arrow-right" size={16} /></>}
+          </button>
+        </div>
+      </div>
+      {createErr ? <div className="su-user-hint" style={{ marginTop: 10, marginInline: 6 }}>{createErr}</div> : null}
+    </div>
+  );
+}
+
+function Hero({
+  workspaceMode = false,
+  prompt,
+  setPrompt,
+  slideCount,
+  setSlideCount,
+  styleId,
+  setStyleId,
+  presentationStyle,
+  setPresentationStyle,
+  onCreate,
+  docFile,
+  setDocFile,
+  fileInputRef,
+  createErr,
+  onClearCreateErr,
+  isLoggedIn,
+  onRequestMoreSlidesLogin,
+  userPlan = "free",
+  onLockedStyle,
+}) {
+  const activeStyleName = (STYLE_PRESETS.find((preset) => preset.id === styleId) || STYLE_PRESETS[0]).name;
+  const activePresentationStyleName = (PRESENTATION_STYLES.find((s) => s.id === presentationStyle) || PRESENTATION_STYLES[0]).name;
 
   if (workspaceMode) {
     return (
@@ -328,100 +470,34 @@ function Hero({
               <button
                 type="button"
                 className="su-btn su-btn-outline create-workspace-secondary-action"
-                onClick={() => navigate("/dashboard")}
+                onClick={() => navigate("/presentation")}
               >
                 <Icon name="doc" size={14} />
                 Мои презентации
               </button>
             </div>
 
-            <div className="hero-composer">
-              <div className="create-workspace-composer-head">
-                <div>
-                  <div className="create-workspace-kicker">Запрос к SlideUp</div>
-                  <p>Опишите тему, аудиторию и нужный результат.</p>
-                </div>
-                <span>Ctrl/Cmd + Enter</span>
-              </div>
-              <textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmitCreate) {
-                    void onCreate();
-                  }
-                }}
-                placeholder="Например: стратегия запуска ИИ-продукта для B2B SaaS на 5 слайдов"
-                className="hero-textarea"
-              />
-
-              {docFile ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--accent-soft)", borderRadius: "var(--r-md)", margin: "0 6px 6px", fontSize: 13 }}>
-                  <Icon name="paperclip" size={13} style={{ color: "var(--accent)" }} />
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-2)" }}>{docFile.name}</span>
-                  <button onClick={() => setDocFile(null)} style={{ color: "var(--ink-3)" }}><Icon name="x" size={12} /></button>
-                </div>
-              ) : null}
-
-              <div className="hero-controls">
-                <div className="hero-controls-start">
-                  {speechSupported ? (
-                    <button
-                      type="button"
-                      className="hero-mic-btn hero-icon-tooltip"
-                      data-active={speechListening}
-                      aria-label={speechListening ? "Остановить голосовой ввод" : "Голосовой ввод"}
-                      aria-pressed={speechListening}
-                      onClick={toggleSpeechInput}
-                    >
-                      <Icon name="mic" size={18} stroke={2} />
-                      <span className="hero-icon-tooltip__bubble" role="tooltip">
-                        {speechListening ? "Стоп" : "Голос в текст"}
-                      </span>
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="hero-attach-btn hero-icon-tooltip"
-                    aria-label="Вложить файл"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <Icon name="paperclip" size={18} stroke={2} />
-                    <span className="hero-icon-tooltip__bubble" role="tooltip">
-                      PDF, Word, PPTX, фото
-                    </span>
-                  </button>
-                </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={HERO_SOURCE_ACCEPT}
-                  style={{ display: "none" }}
-                  onChange={(event) => setDocFile(event.target.files?.[0] ?? null)}
-                />
-
-                <div className="hero-actions">
-                  <PresentationStylePicker value={presentationStyle} onChange={setPresentationStyle} />
-                  <StylePicker value={styleId} onChange={setStyleId} userPlan={userPlan} onLockedPreset={onLockedStyle} />
-                  <Stepper
-                    count={slideCount}
-                    setCount={setSlideCount}
-                    isLoggedIn={isLoggedIn}
-                    onRequestMoreSlidesLogin={onRequestMoreSlidesLogin}
-                  />
-                  <button
-                    type="button"
-                    className="su-btn su-btn-accent"
-                    disabled={!canSubmitCreate}
-                    onClick={() => void onCreate()}
-                    style={{ fontSize: 15 }}
-                  >
-                    Создать <Icon name="arrow-right" size={16} />
-                  </button>
-                </div>
-              </div>
-              {createErr ? <div className="su-user-hint" style={{ marginTop: 10, marginInline: 6 }}>{createErr}</div> : null}
-            </div>
+            <LandingHeroComposer
+              prompt={prompt}
+              setPrompt={setPrompt}
+              slideCount={slideCount}
+              setSlideCount={setSlideCount}
+              styleId={styleId}
+              setStyleId={setStyleId}
+              docFile={docFile}
+              setDocFile={setDocFile}
+              fileInputRef={fileInputRef}
+              createErr={createErr}
+              onCreate={onCreate}
+              submitBusy={false}
+              isLoggedIn={isLoggedIn}
+              onRequestMoreSlidesLogin={onRequestMoreSlidesLogin}
+              userPlan={userPlan}
+              onLockedStyle={onLockedStyle}
+              onClearCreateErr={onClearCreateErr}
+              showSpeech={false}
+              extraHeroActions={<PresentationStylePicker value={presentationStyle} onChange={setPresentationStyle} />}
+            />
           </div>
         </div>
       </section>
@@ -443,85 +519,25 @@ function Hero({
         Загрузите идею, документ, презентацию PPTX или изображение — SlideUp за секунды соберёт убедительную презентацию с чёткой структурой и современным дизайном. Вложение передаётся в модель Claude вместе с вашим текстом. Останется только показать её клиенту или экспортировать в PPTX/PDF.
       </p>
 
-      <div className="hero-composer">
-        <textarea
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmitCreate) {
-              void onCreate();
-            }
-          }}
-          placeholder="Например: стратегия запуска ИИ-продукта для B2B SaaS на 5 слайдов"
-          className="hero-textarea"
-        />
-
-        {docFile ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--accent-soft)", borderRadius: "var(--r-md)", margin: "0 6px 6px", fontSize: 13 }}>
-            <Icon name="paperclip" size={13} style={{ color: "var(--accent)" }} />
-            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-2)" }}>{docFile.name}</span>
-            <button onClick={() => setDocFile(null)} style={{ color: "var(--ink-3)" }}><Icon name="x" size={12} /></button>
-          </div>
-        ) : null}
-
-        <div className="hero-controls">
-          <div className="hero-controls-start">
-            {speechSupported ? (
-              <button
-                type="button"
-                className="hero-mic-btn hero-icon-tooltip"
-                data-active={speechListening}
-                aria-label={speechListening ? "Остановить голосовой ввод" : "Голосовой ввод"}
-                aria-pressed={speechListening}
-                onClick={toggleSpeechInput}
-              >
-                <Icon name="mic" size={18} stroke={2} />
-                <span className="hero-icon-tooltip__bubble" role="tooltip">
-                  {speechListening ? "Стоп" : "Голос в текст"}
-                </span>
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="hero-attach-btn hero-icon-tooltip"
-              aria-label="Вложить файл"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Icon name="paperclip" size={18} stroke={2} />
-              <span className="hero-icon-tooltip__bubble" role="tooltip">
-                PDF, Word, PPTX, фото
-              </span>
-            </button>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={HERO_SOURCE_ACCEPT}
-            style={{ display: "none" }}
-            onChange={(event) => setDocFile(event.target.files?.[0] ?? null)}
-          />
-
-          <div className="hero-actions">
-            <StylePicker value={styleId} onChange={setStyleId} userPlan={userPlan} onLockedPreset={onLockedStyle} />
-            <Stepper
-              count={slideCount}
-              setCount={setSlideCount}
-              isLoggedIn={isLoggedIn}
-              onRequestMoreSlidesLogin={onRequestMoreSlidesLogin}
-            />
-            <button
-              type="button"
-              className="su-btn su-btn-accent"
-              disabled={!canSubmitCreate}
-              onClick={() => void onCreate()}
-              style={{ fontSize: 15 }}
-            >
-              Создать <Icon name="arrow-right" size={16} />
-            </button>
-          </div>
-        </div>
-        {createErr ? <div className="su-user-hint" style={{ marginTop: 10, marginInline: 6 }}>{createErr}</div> : null}
-      </div>
+      <LandingHeroComposer
+        prompt={prompt}
+        setPrompt={setPrompt}
+        slideCount={slideCount}
+        setSlideCount={setSlideCount}
+        styleId={styleId}
+        setStyleId={setStyleId}
+        docFile={docFile}
+        setDocFile={setDocFile}
+        fileInputRef={fileInputRef}
+        createErr={createErr}
+        onCreate={onCreate}
+        submitBusy={false}
+        isLoggedIn={isLoggedIn}
+        onRequestMoreSlidesLogin={onRequestMoreSlidesLogin}
+        userPlan={userPlan}
+        onLockedStyle={onLockedStyle}
+        onClearCreateErr={onClearCreateErr}
+      />
 
       <div className="hero-preview-wrap"><HeroPreview /></div>
     </section>

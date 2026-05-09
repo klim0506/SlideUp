@@ -338,7 +338,7 @@ export default function Personalization() {
   }
 
   const fromParam = new URLSearchParams(window.location.search).get("from");
-  const backUrl = fromParam ? `/presentation/${fromParam}` : "/dashboard";
+  const backUrl = fromParam ? `/presentation/${fromParam}` : "/presentation";
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--ink)" }}>

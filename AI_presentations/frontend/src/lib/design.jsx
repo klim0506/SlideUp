@@ -63,6 +63,20 @@ export const Icon = ({ name, size = 16, stroke = 1.7, style, ...rest }) => {
           <line x1="10" y1="7.5" x2="10" y2="16.5" />
         </svg>
       );
+    case "panel-left-narrow":
+      return (
+        <svg {...props}>
+          <rect x="4" y="5" width="16" height="14" rx="2" />
+          <line x1="9" y1="7.5" x2="9" y2="16.5" />
+        </svg>
+      );
+    case "panel-left-wide":
+      return (
+        <svg {...props}>
+          <rect x="4" y="5" width="16" height="14" rx="2" />
+          <line x1="14" y1="7.5" x2="14" y2="16.5" />
+        </svg>
+      );
     case "search": return <svg {...props}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>;
     case "play": return <svg {...props}><path d="M6 4l14 8-14 8V4z" fill="currentColor" /></svg>;
     case "doc": return <svg {...props}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M9 13h6M9 17h6M9 9h2" /></svg>;

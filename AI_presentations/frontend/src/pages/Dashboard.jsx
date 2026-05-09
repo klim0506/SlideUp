@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { AppHeader } from "@/components/AppHeader";
 import AuthModal from "@/components/AuthModal";
 import UpsellModal from "@/components/UpsellModal";
 import { Icon, SlideThumb, presentationStyleCaption } from "@/lib/design";
-import { apiFetch, apiJson, getAccessToken, getMe, logout, navigate } from "@/lib/api";
+import { apiFetch, apiJson, createBlankPresentation, getAccessToken, getMe, logout, navigate } from "@/lib/api";
 
 function formatDate(value) {
   if (!value) return "";
@@ -23,6 +22,17 @@ function deckPreviewThumbProps(deck) {
   return { slide: slides[0], theme, themeCustom, slideIndex: 0, slideTotal };
 }
 
+function getUserInitials(user) {
+  const label = user?.email || "SlideUp";
+  return label
+    .split(/[\s@._-]/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase() || "SU";
+}
+
 export default function Dashboard() {
   const [presentations, setPresentations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -34,6 +44,7 @@ export default function Dashboard() {
   const [exportNotice, setExportNotice] = useState("");
   const [upsellOpen, setUpsellOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [createBusy, setCreateBusy] = useState(false);
 
   useEffect(() => {
     getMe().then(setUser).catch(() => setUser(null));
@@ -71,6 +82,25 @@ export default function Dashboard() {
     setPendingDelete(null);
   }
 
+  async function createPresentation() {
+    if (createBusy) return;
+    if (!getAccessToken()) {
+      setAuthOpen(true);
+      return;
+    }
+    setCreateBusy(true);
+    setError("");
+    try {
+      const deck = await createBlankPresentation();
+      navigate(`/presentation/${deck.id}`);
+    } catch (err) {
+      if (err.status === 401) setAuthOpen(true);
+      else setError(err.message || "Не получилось создать презентацию — попробуйте ещё раз.");
+    } finally {
+      setCreateBusy(false);
+    }
+  }
+
   async function downloadPresentation(deck, format, event) {
     event.stopPropagation();
     setExportNotice("");
@@ -106,20 +136,63 @@ export default function Dashboard() {
 
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = presentations.filter((item) => !normalizedSearch || item.title?.toLowerCase().includes(normalizedSearch));
+  const hasDecks = !loading && filtered.length > 0;
+  const showEmptyLibrary = !loading && filtered.length === 0 && !search.trim();
+  const pageTitleStyle = showEmptyLibrary
+    ? {
+        margin: 0,
+        fontFamily: "var(--font-ui, system-ui, sans-serif)",
+        fontSize: 12,
+        fontWeight: 650,
+        lineHeight: 1.3,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        color: "var(--ink-3)",
+      }
+    : hasDecks
+      ? {
+          margin: 0,
+          fontFamily: "var(--font-display)",
+          fontSize: "clamp(20px, 2.5vw, 26px)",
+          fontWeight: 650,
+          lineHeight: 1.12,
+          letterSpacing: "-0.03em",
+          color: "var(--ink-2)",
+        }
+      : {
+          margin: 0,
+          fontFamily: "var(--font-display)",
+          fontSize: "clamp(22px, 3vw, 28px)",
+          fontWeight: 650,
+          lineHeight: 1.12,
+          letterSpacing: "-0.03em",
+          color: "var(--ink-2)",
+        };
 
   return (
     <div className="su-page">
-      <AppHeader user={user} active="library" onLogout={() => { logout(); navigate("/"); }} />
+      <DashboardHeader user={user} onLogout={() => { logout(); navigate("/"); }} />
 
       <main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px max(24px, 5vw) 88px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18, flexWrap: "wrap", marginBottom: 24 }}>
-          <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: "clamp(34px, 4.6vw, 48px)", lineHeight: 1.02, letterSpacing: "-0.04em" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 18,
+            flexWrap: "wrap",
+            marginBottom: hasDecks ? 16 : showEmptyLibrary ? 20 : 22,
+          }}
+        >
+          <h1 style={pageTitleStyle}>
             Мои презентации
           </h1>
 
-          <button className="su-btn su-btn-accent" onClick={() => navigate("/create")} style={{ minHeight: 44, paddingInline: 18 }}>
-            <Icon name="plus" size={14} /> Создать презентацию
-          </button>
+          {showEmptyLibrary ? null : (
+            <button className="su-btn su-btn-accent" onClick={() => void createPresentation()} disabled={createBusy} style={{ minHeight: 44, paddingInline: 18 }}>
+              <Icon name={createBusy ? "loader" : "plus"} size={14} /> {createBusy ? "Создаём..." : "Создать презентацию"}
+            </button>
+          )}
         </div>
 
         {error ? <div className="su-user-hint" style={{ marginBottom: 20 }}>{error}</div> : null}
@@ -133,7 +206,7 @@ export default function Dashboard() {
         {loading ? (
           <LoadingSkeleton />
         ) : filtered.length === 0 ? (
-          <EmptyState onCreate={() => navigate("/create")} hasSearch={search.length > 0} />
+          <EmptyState onCreate={createPresentation} hasSearch={search.length > 0} createBusy={createBusy} />
         ) : (
           <section style={{ display: "grid", gap: 18 }}>
             <div className="su-card" style={toolbarCardStyle}>
@@ -201,6 +274,76 @@ export default function Dashboard() {
   );
 }
 
+function DashboardHeader({ user, onLogout }) {
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileLabel = user?.email || "Аккаунт";
+
+  return (
+    <header className="presentation-editor-header dashboard-editor-header">
+      <div className="presentation-editor-header__left">
+        <button type="button" className="presentation-editor-brand" onClick={() => navigate("/")}>
+          <Icon name="logo" size={26} stroke={2.2} style={{ color: "var(--accent)" }} />
+          <span>SlideUp</span>
+        </button>
+        <div className="presentation-editor-path">
+          <span className="presentation-editor-crumb dashboard-editor-crumb">Презентации</span>
+        </div>
+      </div>
+
+      <div className="presentation-editor-actions dashboard-editor-actions">
+        <div
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setProfileMenuOpen(false);
+          }}
+          style={{ position: "relative", flexShrink: 0 }}
+        >
+          <button
+            type="button"
+            className="presentation-editor-avatar"
+            title={profileLabel}
+            aria-haspopup="menu"
+            aria-expanded={profileMenuOpen}
+            onClick={() => setProfileMenuOpen((value) => !value)}
+          >
+            {getUserInitials(user)}
+          </button>
+          {profileMenuOpen ? (
+            <div role="menu" className="presentation-editor-profile-menu">
+              <div className="presentation-editor-profile-head">
+                <strong>Рабочий аккаунт</strong>
+                <span>{profileLabel}</span>
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setProfileMenuOpen(false);
+                  navigate("/usage");
+                }}
+              >
+                <Icon name="credit" size={20} stroke={1.9} />
+                Лимиты и тарифы
+              </button>
+              <div className="presentation-editor-profile-divider" />
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setProfileMenuOpen(false);
+                  onLogout?.();
+                }}
+              >
+                <Icon name="x" size={20} stroke={1.9} />
+                Выйти
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </header>
+  );
+}
+
 function LoadingSkeleton() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
@@ -217,21 +360,60 @@ function LoadingSkeleton() {
   );
 }
 
-function EmptyState({ onCreate, hasSearch }) {
+function EmptyState({ onCreate, hasSearch, createBusy = false }) {
+  const isHero = !hasSearch;
   return (
-    <div style={{ background: "var(--surface)", border: "1px dashed var(--line-2)", borderRadius: "var(--r-lg)", padding: "max(64px, 8vw) 24px", textAlign: "center" }}>
-      <div style={{ width: 56, height: 56, borderRadius: 999, background: "var(--accent-soft)", color: "var(--accent)", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 24 }}>
-        <Icon name="sparkles" size={24} />
+    <div
+      style={{
+        background: "var(--surface)",
+        border: "1px dashed var(--line-2)",
+        borderRadius: "var(--r-lg)",
+        padding: isHero ? "max(72px, 9vw) max(24px, 4vw)" : "max(56px, 7vw) 24px",
+        textAlign: "center",
+      }}
+    >
+      <div
+        style={{
+          width: isHero ? 64 : 56,
+          height: isHero ? 64 : 56,
+          borderRadius: 999,
+          background: "var(--accent-soft)",
+          color: "var(--accent)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: isHero ? 28 : 22,
+        }}
+      >
+        <Icon name="sparkles" size={isHero ? 28 : 24} />
       </div>
-      <h2 style={{ fontSize: 28, fontWeight: 760, letterSpacing: "-0.035em", margin: "0 0 10px" }}>
+      <h2
+        style={{
+          fontFamily: "var(--font-display)",
+          fontSize: isHero ? "clamp(30px, 5vw, 40px)" : 26,
+          fontWeight: 760,
+          letterSpacing: "-0.038em",
+          lineHeight: 1.08,
+          margin: isHero ? "0 0 14px" : "0 0 10px",
+          color: "var(--ink)",
+        }}
+      >
         {hasSearch ? "Ничего не найдено" : "Создайте первую презентацию"}
       </h2>
-      <p style={{ color: "var(--ink-2)", maxWidth: 480, margin: "0 auto 28px", lineHeight: 1.55 }}>
+      <p
+        style={{
+          color: "var(--ink-2)",
+          maxWidth: isHero ? 520 : 480,
+          margin: isHero ? "0 auto 32px" : "0 auto 24px",
+          lineHeight: 1.58,
+          fontSize: isHero ? "clamp(16px, 2.2vw, 17px)" : 15,
+        }}
+      >
         {hasSearch ? "Попробуйте другой запрос." : "История, экспорт и публичные ссылки появятся здесь после первой генерации."}
       </p>
       {!hasSearch ? (
-        <button onClick={onCreate} className="su-btn su-btn-primary" style={{ padding: "12px 22px", fontSize: 15 }}>
-          <Icon name="plus" size={16} /> Создать презентацию
+        <button onClick={() => void onCreate?.()} disabled={createBusy} className="su-btn su-btn-primary" style={{ padding: "14px 26px", fontSize: 16, minHeight: 48 }}>
+          <Icon name={createBusy ? "loader" : "plus"} size={16} /> {createBusy ? "Создаём..." : "Создать презентацию"}
         </button>
       ) : null}
     </div>

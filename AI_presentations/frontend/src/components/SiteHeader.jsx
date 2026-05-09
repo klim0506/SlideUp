@@ -1,6 +1,6 @@
 import { Icon } from "@/lib/design";
 import { LEGAL } from "@/lib/legal";
-import { navigate } from "@/lib/api";
+import { createBlankPresentation, navigate } from "@/lib/api";
 
 function scrollToLandingSection(elementId) {
   const run = () => document.getElementById(elementId)?.scrollIntoView({ behavior: "smooth" });
@@ -14,12 +14,9 @@ function scrollToLandingSection(elementId) {
 
 /** Маркетинговая шапка лендинга: одинаковые левая/центр/правая колонки на главной и юридических страницах. */
 export default function SiteHeader({ user, onLogin }) {
-  const goCreate = () => {
-    if (window.location.pathname === "/create") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } else {
-      navigate("/create");
-    }
+  const goCreate = async () => {
+    const deck = await createBlankPresentation();
+    navigate(`/presentation/${deck.id}`);
   };
 
   return (
@@ -78,7 +75,7 @@ export default function SiteHeader({ user, onLogin }) {
 
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         {user ? (
-          <button type="button" className="su-btn su-btn-ghost" style={{ fontSize: 15 }} onClick={() => navigate("/dashboard")}>
+          <button type="button" className="su-btn su-btn-ghost" style={{ fontSize: 15 }} onClick={() => navigate("/presentation")}>
             <Icon name="doc" size={14} /> Мои презентации
           </button>
         ) : (
@@ -91,7 +88,7 @@ export default function SiteHeader({ user, onLogin }) {
             Войти
           </button>
         )}
-        <button type="button" className="su-btn su-btn-accent" style={{ fontSize: 15 }} onClick={goCreate}>
+        <button type="button" className="su-btn su-btn-accent" style={{ fontSize: 15 }} onClick={() => void goCreate()}>
           Создать презентацию
         </button>
       </div>

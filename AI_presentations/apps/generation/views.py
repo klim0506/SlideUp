@@ -156,7 +156,12 @@ class GeneratePresentationView(APIView):
     permission_classes = []
 
     def post(self, request):
-        """Generate a presentation, spend authenticated user credits, and persist the result."""
+        """Generate a presentation, spend authenticated user credits, and persist the result.
+
+        If ``presentation_id`` is provided in the payload and points to an empty
+        presentation owned by the current user, the generated deck is written
+        into that presentation in place (so the editor URL stays stable).
+        """
         started_at = timezone.now()
         prompt = (request.data.get("prompt") or "").strip()
         theme = sanitize_generation_theme(
@@ -167,6 +172,7 @@ class GeneratePresentationView(APIView):
         style = raw_style if raw_style in KNOWN_STYLES else "pitch"
         slides_count = _parse_slides_count(request.data.get("slides_count", 8))
         session_key = _ensure_session_key(request)
+        target_presentation_id = (request.data.get("presentation_id") or "").strip() or None
 
         uploaded = request.FILES.get("source_file")
         context_extra = ""
@@ -252,17 +258,50 @@ class GeneratePresentationView(APIView):
             if spent > 0 and spent < len(deck_slides):
                 slides_unlocked = spent
 
-        presentation = Presentation.objects.create(
-            user=user,
-            session_key=session_key,
-            title=data["title"],
-            style=style,
-            theme=theme,
-            presentation_format=PRESENTATION_FORMAT_HTML_V1,
-            slides=deck_slides,
-            slides_unlocked=slides_unlocked,
-            assets=assets,
-        )
+        existing_target = None
+        if target_presentation_id and user:
+            existing_target = Presentation.objects.filter(
+                pk=target_presentation_id,
+                user=user,
+            ).first()
+            if existing_target and (
+                isinstance(existing_target.slides, list) and len(existing_target.slides) > 0
+            ):
+                # Refuse to overwrite a non-empty deck.
+                existing_target = None
+
+        if existing_target is not None:
+            existing_target.title = data["title"]
+            existing_target.style = style
+            existing_target.theme = theme
+            existing_target.presentation_format = PRESENTATION_FORMAT_HTML_V1
+            existing_target.slides = deck_slides
+            existing_target.slides_unlocked = slides_unlocked
+            existing_target.assets = assets
+            existing_target.slide_histories = {}
+            existing_target.save(update_fields=(
+                "title",
+                "style",
+                "theme",
+                "presentation_format",
+                "slides",
+                "slides_unlocked",
+                "assets",
+                "slide_histories",
+            ))
+            presentation = existing_target
+        else:
+            presentation = Presentation.objects.create(
+                user=user,
+                session_key=session_key,
+                title=data["title"],
+                style=style,
+                theme=theme,
+                presentation_format=PRESENTATION_FORMAT_HTML_V1,
+                slides=deck_slides,
+                slides_unlocked=slides_unlocked,
+                assets=assets,
+            )
 
         if user:
             increment_usage(
@@ -419,15 +458,15 @@ class AssistDeckView(APIView):
             has_source_file=False,
         )
 
-        if not isinstance(slides, list) or len(slides) < 1:
+        if not isinstance(slides, list) or (len(slides) < 1 and mode != "append_slide"):
             _finish_job(
                 job,
                 status_value=GenerationJob.Status.REJECTED,
                 started_at=started_at,
-                error_message="Slides must be a non-empty array.",
+                error_message="Slides must be a non-empty array unless append_slide mode is used.",
             )
             return Response(
-                {"detail": "Slides must be a non-empty array."},
+                {"detail": "Slides must be a non-empty array unless append_slide mode is used."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if not instruction:

@@ -22,7 +22,11 @@ function getRoute() {
     return { name: "presentation", id: presentationMatch[1], publicView: false };
   }
   if (window.location.pathname === "/dashboard") {
-    return { name: "dashboard" };
+    window.history.replaceState({}, "", "/presentation");
+    return { name: "presentationList" };
+  }
+  if (window.location.pathname === "/presentation" || window.location.pathname === "/presentation/") {
+    return { name: "presentationList" };
   }
   if (window.location.pathname === "/usage") {
     return { name: "usage" };
@@ -33,8 +37,9 @@ function getRoute() {
   if (window.location.pathname === "/generating") {
     return { name: "generating" };
   }
-  if (window.location.pathname === "/create") {
-    return { name: "create" };
+  if (window.location.pathname === "/create" || window.location.pathname === "/create/") {
+    window.history.replaceState({}, "", "/presentation");
+    return { name: "presentationList" };
   }
   if (window.location.pathname.startsWith("/legal/")) {
     return { name: "legal" };
@@ -57,7 +62,7 @@ function App() {
   if (route.name === "presentation") {
     return <PresentationView id={route.id} publicView={route.publicView} />;
   }
-  if (route.name === "dashboard") {
+  if (route.name === "presentationList") {
     return <Dashboard />;
   }
   if (route.name === "usage") {
@@ -68,9 +73,6 @@ function App() {
   }
   if (route.name === "generating") {
     return <Generating />;
-  }
-  if (route.name === "create") {
-    return <PresentationView createMode />;
   }
   if (route.name === "legal") {
     return <LegalPage />;

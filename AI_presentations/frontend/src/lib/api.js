@@ -230,6 +230,17 @@ export async function apiJson(path, options = {}) {
   return data;
 }
 
+export async function createBlankPresentation(options = {}) {
+  return apiJson("/api/presentations/", {
+    method: "POST",
+    body: JSON.stringify({
+      title: options.title || "Новая презентация",
+      theme: options.theme || "light",
+      slides: [],
+    }),
+  });
+}
+
 export async function login(email, password) {
   const tokens = await apiJson("/api/auth/login/", {
     method: "POST",

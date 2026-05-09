@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
@@ -14,6 +15,14 @@ from .serializers import (
     PresentationSerializer,
     PresentationThemeSerializer,
 )
+from .slide_html import PRESENTATION_FORMAT_HTML_V1
+from .themes import normalize_theme, user_can_select_theme
+
+
+def _ensure_session_key(request):
+    if not request.session.session_key:
+        request.session.save()
+    return request.session.session_key or ""
 
 
 class PresentationViewSet(viewsets.ModelViewSet):
@@ -24,11 +33,17 @@ class PresentationViewSet(viewsets.ModelViewSet):
         if self.action == "retrieve":
             return Presentation.objects.all()
         if self.request.user.is_authenticated:
-            return Presentation.objects.filter(user=self.request.user).order_by("-created_at")
+            qs = Presentation.objects.filter(user=self.request.user).order_by("-created_at")
+            if self.action == "list":
+                # Drafts that were never sent to generation (slides=[]) are not shown
+                # in the user's library; they remain accessible by direct URL until
+                # the user actually generates content into them.
+                qs = qs.exclude(Q(slides=[]) | Q(slides__isnull=True))
+            return qs
         return Presentation.objects.none()
 
     def get_permissions(self):
-        if self.action == "retrieve":
+        if self.action in {"retrieve", "create"}:
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
 
@@ -64,10 +79,25 @@ class PresentationViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def create(self, request, *args, **kwargs):
-        return Response(
-            {"detail": 'Use POST /api/generate/ to create presentations.'},
-            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        title = (request.data.get("title") or "Новая презентация").strip() or "Новая презентация"
+        theme = normalize_theme(request.data.get("theme") or "light")
+        user = request.user if request.user.is_authenticated else None
+        if not user_can_select_theme(user, theme):
+            return Response(
+                {"theme": ["Эта цветовая схема недоступна на вашем тарифе."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        presentation = Presentation.objects.create(
+            user=user,
+            session_key=_ensure_session_key(request),
+            title=title[:255],
+            theme=theme,
+            presentation_format=PRESENTATION_FORMAT_HTML_V1,
+            slides=[],
+            slide_histories={},
         )
+        return Response(self.get_serializer(presentation).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["patch"], url_path="theme")
     def update_theme(self, request, pk=None):

@@ -24,7 +24,7 @@ export function AppHeader({ user, onLogout, onLibrary, active }) {
       </button>
 
       <nav style={{ display: "flex", gap: 4, justifySelf: "center" }}>
-        <NavTab active={active === "library"} onClick={onLibrary || (() => navigate("/dashboard"))} icon="doc" label="Презентации" />
+        <NavTab active={active === "library"} onClick={onLibrary || (() => navigate("/presentation"))} icon="doc" label="Презентации" />
       </nav>
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", justifySelf: "end" }}>
@@ -95,7 +95,7 @@ function UserMenu({ user, onLogout }) {
               <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{label}</div>
             </div>
             <MenuRow icon="credit" label="Лимиты и тарифы" onClick={() => { setOpen(false); navigate("/usage"); }} />
-            <MenuRow icon="doc" label="Мои презентации" onClick={() => { setOpen(false); navigate("/dashboard"); }} />
+            <MenuRow icon="doc" label="Мои презентации" onClick={() => { setOpen(false); navigate("/presentation"); }} />
             <div style={{ height: 1, background: "var(--line)", margin: "4px 0" }} />
             <MenuRow icon="x" label="Выйти" onClick={() => { setOpen(false); onLogout?.(); }} />
           </div>
