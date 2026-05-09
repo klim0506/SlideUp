@@ -27,6 +27,35 @@ import {
   newSlideSid,
 } from "@/lib/slideHistory";
 import { DeckSlideThumbCanvas, getSlideBulletMarker, getSlideBullets, getSlideStats, getSlideSubtitle, getSlideTitle } from "@/lib/slidePreview";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
+/** Restrict drag translation to the vertical axis only. */
+const restrictToVerticalAxis = ({ transform }) => ({ ...transform, x: 0 });
+
+/** Clamp drag translation so the dragged node stays within its scrollable parent. */
+const restrictToParentElement = ({ transform, draggingNodeRect, containerNodeRect }) => {
+  if (!draggingNodeRect || !containerNodeRect) return transform;
+  return {
+    ...transform,
+    x: Math.min(Math.max(transform.x, containerNodeRect.left - draggingNodeRect.left), containerNodeRect.right - draggingNodeRect.right),
+    y: Math.min(Math.max(transform.y, containerNodeRect.top - draggingNodeRect.top), containerNodeRect.bottom - draggingNodeRect.bottom),
+  };
+};
+
+/** Hook: returns true when viewport width <= breakpoint (default 768). */
+function useIsMobile(breakpoint = 768) {
+  const [mobile, setMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= breakpoint);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const handler = (e) => setMobile(e.matches);
+    setMobile(mq.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return mobile;
+}
 
 const VIEWER_STORAGE_PREFIX = "slideup-viewer-appearance:";
 
@@ -466,6 +495,35 @@ function ExistingPresentationView({ id, publicView = false }) {
   const [deckAiPromptSeed, setDeckAiPromptSeed] = useState(null);
   const [persistBusy, setPersistBusy] = useState(false);
 
+  // A4: Dark mode
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return localStorage.getItem("slideup-editor-dark-mode") === "true"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("slideup-editor-dark-mode", String(darkMode)); } catch { /* ignore */ }
+  }, [darkMode]);
+
+  // A6: Mobile AI overlay
+  const isMobile = useIsMobile(768);
+  const [mobileAiOpen, setMobileAiOpen] = useState(false);
+
+  // B1: Slide menu (delete / duplicate)
+  const [slideMenuIndex, setSlideMenuIndex] = useState(null);
+  useEffect(() => {
+    if (slideMenuIndex == null) return;
+    const close = () => setSlideMenuIndex(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [slideMenuIndex]);
+
+  // B2: Undo/Redo
+  const undoStackRef = useRef([]);
+  const redoStackRef = useRef([]);
+
+  // B8: Save indicator
+  const [saveStatus, setSaveStatus] = useState("idle");
+  const saveTimerRef = useRef(null);
+
   const slides = Array.isArray(presentation?.slides) ? presentation.slides : [];
 
   const unlockedSlideCount = useMemo(() => {
@@ -562,6 +620,14 @@ function ExistingPresentationView({ id, publicView = false }) {
   const selectedSlide = slides[currentSlide] || null;
   const slideHistoriesMap = useMemo(() => normalizeHistoriesMap(presentation?.slide_histories), [presentation?.slide_histories]);
 
+  /** B2: Push current state onto undo stack. Call before every mutation. */
+  const pushUndo = useCallback(() => {
+    if (!presentation) return;
+    const entry = { slides: presentation.slides, slide_histories: presentation.slide_histories };
+    undoStackRef.current = [...undoStackRef.current.slice(-29), entry];
+    redoStackRef.current = [];
+  }, [presentation]);
+
   const persistDeckPatch = useCallback(
     async (patch, successNotice) => {
       if (publicView || !presentation?.id) return;
@@ -570,6 +636,8 @@ function ExistingPresentationView({ id, publicView = false }) {
         return;
       }
       setPersistBusy(true);
+      setSaveStatus("saving");
+      clearTimeout(saveTimerRef.current);
       setNotice("");
       try {
         const data = await apiJson(`/api/presentations/${id}/`, {
@@ -578,9 +646,12 @@ function ExistingPresentationView({ id, publicView = false }) {
         });
         setPresentation(data);
         if (successNotice) setNotice(successNotice);
+        setSaveStatus("saved");
+        saveTimerRef.current = setTimeout(() => setSaveStatus("idle"), 3000);
       } catch (err) {
         const msg = err.message || "Изменения не сохранились — попробуйте ещё раз.";
         setNotice(msg);
+        setSaveStatus("error");
         if (err.status === 429 || err.data?.show_upsell) setUpsellOpen(true);
       } finally {
         setPersistBusy(false);
@@ -673,6 +744,7 @@ function ExistingPresentationView({ id, publicView = false }) {
   const applyRefinedSlideAtIndex = useCallback(
     async (slideIndex, refinedSlide, summary, source = "ai") => {
       if (!presentation) return;
+      pushUndo();
       const sid = slides[slideIndex]?.[SLIDE_SID_KEY] || refinedSlide?.[SLIDE_SID_KEY] || newSlideSid();
       const merged = { ...refinedSlide, [SLIDE_SID_KEY]: sid };
       const nextSlides = [...slides];
@@ -694,6 +766,7 @@ function ExistingPresentationView({ id, publicView = false }) {
   const handleApplyDeckAssist = useCallback(
     async (instruction, options = {}) => {
       if (!presentation || publicView) return;
+      pushUndo();
       if (!getAccessToken()) {
         setAuthOpen(true);
         return;
@@ -810,6 +883,7 @@ function ExistingPresentationView({ id, publicView = false }) {
 
   const handleHistoryRestore = useCallback(
     (chronoIdx) => {
+      pushUndo();
       const i = historySlideSafe;
       const sid = slides[i]?.[SLIDE_SID_KEY];
       const chain = sid ? slideHistoriesMap[sid] : null;
@@ -839,6 +913,7 @@ function ExistingPresentationView({ id, publicView = false }) {
     (chronoIdx) => {
       clearTimeout(inlineEditTimeoutRef.current);
       if (persistBusy) return;
+      pushUndo();
       const i = currentSlide;
       const sid = slides[i]?.[SLIDE_SID_KEY];
       const chain = sid ? slideHistoriesMap[sid] : null;
@@ -860,9 +935,12 @@ function ExistingPresentationView({ id, publicView = false }) {
     [slides, slideHistoriesMap, currentSlide, persistBusy, persistDeckPatch],
   );
 
+  const inlineEditUndoPushedRef = useRef(false);
+
   const handleInlineSlideEdit = useCallback(
     (updatedSlide) => {
       if (publicView) return;
+      if (!inlineEditUndoPushedRef.current) { pushUndo(); inlineEditUndoPushedRef.current = true; }
       const sid = updatedSlide[SLIDE_SID_KEY] || slides[currentSlide]?.[SLIDE_SID_KEY];
       const merged = { ...updatedSlide, [SLIDE_SID_KEY]: sid };
       const nextSlides = [...slides];
@@ -870,10 +948,11 @@ function ExistingPresentationView({ id, publicView = false }) {
       setPresentation((prev) => prev ? { ...prev, slides: nextSlides } : prev);
       clearTimeout(inlineEditTimeoutRef.current);
       inlineEditTimeoutRef.current = setTimeout(() => {
+        inlineEditUndoPushedRef.current = false;
         void persistDeckPatch({ slides: nextSlides }, "");
       }, 800);
     },
-    [publicView, slides, currentSlide, persistDeckPatch],
+    [publicView, slides, currentSlide, persistDeckPatch, pushUndo],
   );
 
   const flushEditedSlideVersion = useCallback(
@@ -933,6 +1012,80 @@ function ExistingPresentationView({ id, publicView = false }) {
       nonce: Date.now(),
     });
   }, [publicView, appendSlideBusy]);
+
+  /** A1: Drag-and-drop reorder. */
+  const handleReorderSlides = useCallback(
+    (oldIndex, newIndex) => {
+      if (publicView || oldIndex === newIndex) return;
+      pushUndo();
+      const nextSlides = arrayMove([...slides], oldIndex, newIndex);
+      const hist = { ...slideHistoriesMap };
+      const nextHist = {};
+      nextSlides.forEach((s) => { const sid = s?.[SLIDE_SID_KEY]; if (sid) nextHist[sid] = hist[sid] || []; });
+      Object.keys(hist).forEach((k) => { if (!(k in nextHist)) nextHist[k] = hist[k]; });
+      let nextCurrent = currentSlide;
+      if (currentSlide === oldIndex) nextCurrent = newIndex;
+      else if (oldIndex < currentSlide && newIndex >= currentSlide) nextCurrent = currentSlide - 1;
+      else if (oldIndex > currentSlide && newIndex <= currentSlide) nextCurrent = currentSlide + 1;
+      setCurrentSlide(Math.max(0, Math.min(nextCurrent, nextSlides.length - 1)));
+      void persistDeckPatch({ slides: nextSlides, slide_histories: nextHist }, "");
+    },
+    [publicView, slides, slideHistoriesMap, currentSlide, persistDeckPatch, pushUndo],
+  );
+
+  /** B1: Delete slide. */
+  const handleDeleteSlide = useCallback(
+    (index) => {
+      if (publicView || slides.length <= 1) return;
+      pushUndo();
+      const nextSlides = slides.filter((_, i) => i !== index);
+      const hist = { ...slideHistoriesMap };
+      let nextCurrent = currentSlide;
+      if (index < currentSlide) nextCurrent = currentSlide - 1;
+      else if (index === currentSlide) nextCurrent = Math.min(currentSlide, nextSlides.length - 1);
+      setCurrentSlide(Math.max(0, nextCurrent));
+      void persistDeckPatch({ slides: nextSlides, slide_histories: hist }, "");
+    },
+    [publicView, slides, slideHistoriesMap, currentSlide, persistDeckPatch, pushUndo],
+  );
+
+  /** B1: Duplicate slide. */
+  const handleDuplicateSlide = useCallback(
+    (index) => {
+      if (publicView) return;
+      pushUndo();
+      const source = slides[index];
+      if (!source) return;
+      const sid = newSlideSid();
+      const clone = { ...cloneSlideSnapshot(source), [SLIDE_SID_KEY]: sid };
+      const nextSlides = [...slides.slice(0, index + 1), clone, ...slides.slice(index + 1)];
+      const hist = { ...slideHistoriesMap };
+      hist[sid] = [{ at: new Date().toISOString(), source: "user", summary: `Копия слайда ${index + 1}`, slide: cloneSlideSnapshot(clone) }];
+      setCurrentSlide(index + 1);
+      void persistDeckPatch({ slides: nextSlides, slide_histories: hist }, "");
+    },
+    [publicView, slides, slideHistoriesMap, persistDeckPatch, pushUndo],
+  );
+
+  /** B2: Undo. */
+  const handleUndo = useCallback(() => {
+    if (!undoStackRef.current.length || !presentation) return;
+    const current = { slides: presentation.slides, slide_histories: presentation.slide_histories };
+    redoStackRef.current = [...redoStackRef.current.slice(-29), current];
+    const prev = undoStackRef.current[undoStackRef.current.length - 1];
+    undoStackRef.current = undoStackRef.current.slice(0, -1);
+    void persistDeckPatch({ slides: prev.slides, slide_histories: prev.slide_histories }, "");
+  }, [presentation, persistDeckPatch]);
+
+  /** B2: Redo. */
+  const handleRedo = useCallback(() => {
+    if (!redoStackRef.current.length || !presentation) return;
+    const current = { slides: presentation.slides, slide_histories: presentation.slide_histories };
+    undoStackRef.current = [...undoStackRef.current.slice(-29), current];
+    const next = redoStackRef.current[redoStackRef.current.length - 1];
+    redoStackRef.current = redoStackRef.current.slice(0, -1);
+    void persistDeckPatch({ slides: next.slides, slide_histories: next.slide_histories }, "");
+  }, [presentation, persistDeckPatch]);
 
   const handlePromptCurrentSlideVariant = useCallback(() => {
     if (publicView || deckAiBusy) return;
@@ -1007,6 +1160,20 @@ function ExistingPresentationView({ id, publicView = false }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [unlockedSlideCount, moveSlide]);
+
+  // B2: Ctrl+Z / Ctrl+Shift+Z
+  useEffect(() => {
+    function onUndoRedo(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        if (e.target instanceof Element && e.target.closest("input, textarea")) return;
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      }
+    }
+    window.addEventListener("keydown", onUndoRedo);
+    return () => window.removeEventListener("keydown", onUndoRedo);
+  }, [handleUndo, handleRedo]);
 
   const pdfExportLocked = useMemo(() => {
     if (!billingUsage || billingUsage.pdf_exports_limit == null) return false;
@@ -1325,12 +1492,19 @@ function ExistingPresentationView({ id, publicView = false }) {
 
   if (loading) {
     return (
-      <div className="su-page editor-dark" style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--ink)" }}>
+      <div className={`su-page editor-dark${darkMode ? " editor-actual-dark" : ""}`} style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--ink)" }}>
         <AppHeader user={user} active="library" onLibrary={() => navigate(publicView ? "/" : "/dashboard")} onLogout={() => { logout(); navigate("/"); }} />
-        <main style={{ maxWidth: 1180, margin: "0 auto", padding: "48px max(24px, 5vw)", display: "grid", placeItems: "center" }}>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, color: "var(--ink-3)", fontSize: 14 }}>
-            <Icon name="logo" size={28} style={{ color: "var(--accent)" }} />
-            Загружаем презентацию
+        <main style={{ flex: 1, display: "flex", gap: 16, padding: "28px 20px 20px", minHeight: 0, overflow: "hidden" }}>
+          <div style={{ width: 198, flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, paddingTop: 4 }}>
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="skeleton-pulse" style={{ width: "100%", aspectRatio: "16/9" }} />
+            ))}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="skeleton-pulse" style={{ width: "100%", aspectRatio: "16/9" }} />
+          </div>
+          <div style={{ width: 320, flexShrink: 0 }}>
+            <div className="skeleton-pulse" style={{ width: "100%", height: "80%" }} />
           </div>
         </main>
       </div>
@@ -1376,7 +1550,7 @@ function ExistingPresentationView({ id, publicView = false }) {
 
   return (
     <div
-      className="su-page editor-dark"
+      className={`su-page editor-dark${darkMode ? " editor-actual-dark" : ""}`}
       style={{ height: "100vh", overflow: "hidden", background: "var(--bg)", color: "var(--ink)", display: "flex", flexDirection: "column" }}
     >
       <AppHeader user={user} active="library" onLibrary={() => navigate(publicView ? "/" : "/dashboard")} onLogout={() => { logout(); navigate("/"); }} />
@@ -1573,6 +1747,17 @@ function ExistingPresentationView({ id, publicView = false }) {
                   flexWrap: "wrap",
                 }}
               >
+                {/* B2: Undo/Redo */}
+                {!publicView ? (
+                  <>
+                    <button type="button" className="su-btn su-btn-outline" title="Отменить (Ctrl+Z)" disabled={!undoStackRef.current.length} onClick={handleUndo} style={{ padding: "8px 10px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <Icon name="rotate-ccw" size={15} stroke={2} />
+                    </button>
+                    <button type="button" className="su-btn su-btn-outline" title="Повторить (Ctrl+Shift+Z)" disabled={!redoStackRef.current.length} onClick={handleRedo} style={{ padding: "8px 10px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <Icon name="rotate-cw" size={15} stroke={2} />
+                    </button>
+                  </>
+                ) : null}
                 {!publicView ? (
                   <button
                     type="button"
@@ -1583,6 +1768,12 @@ function ExistingPresentationView({ id, publicView = false }) {
                   >
                     <Icon name="palette" size={15} stroke={2} />
                     {"Стиль"}
+                  </button>
+                ) : null}
+                {/* A4: Dark mode toggle */}
+                {!publicView ? (
+                  <button type="button" className="su-btn su-btn-outline" title={darkMode ? "Светлый режим" : "Тёмный режим"} onClick={() => setDarkMode((v) => !v)} style={{ padding: "8px 10px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <Icon name={darkMode ? "sun" : "moon"} size={15} stroke={2} />
                   </button>
                 ) : null}
                 <button
@@ -1705,6 +1896,16 @@ function ExistingPresentationView({ id, publicView = false }) {
               </span>
               <span style={{ opacity: 0.4 }}>·</span>
               <span>{presentationStyleCaption(presentation.theme || theme)}</span>
+              {/* B8: Save indicator */}
+              {saveStatus !== "idle" && (
+                <>
+                  <span style={{ opacity: 0.4 }}>·</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: saveStatus === "error" ? "#b91c1c" : saveStatus === "saved" ? "#16a34a" : "var(--accent)" }}>
+                    <Icon name={saveStatus === "saving" ? "loader" : saveStatus === "saved" ? "check" : "alert-triangle"} size={12} stroke={2} style={saveStatus === "saving" ? { animation: "pulse 1s linear infinite" } : undefined} />
+                    {saveStatus === "saving" ? "Сохраняю..." : saveStatus === "saved" ? "Сохранено" : "Ошибка"}
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
@@ -1755,6 +1956,11 @@ function ExistingPresentationView({ id, publicView = false }) {
             onAppendSlidePrompt={handleRequestAppendSlide}
             moveSlide={moveSlide}
             leadingInsetPx={publicView ? 8 : PRESENTATION_TITLE_RAIL_SLOT_PX}
+            onReorder={!publicView ? handleReorderSlides : null}
+            onDeleteSlide={!publicView ? handleDeleteSlide : null}
+            onDuplicateSlide={!publicView ? handleDuplicateSlide : null}
+            slideMenuIndex={slideMenuIndex}
+            onSlideMenuChange={setSlideMenuIndex}
           />
           <div
             ref={canvasRef}
@@ -1785,6 +1991,7 @@ function ExistingPresentationView({ id, publicView = false }) {
               >
                 <div
                   ref={setSlideAreaEl}
+                  className="slide-canvas-transition"
                   style={{
                     flex: 1,
                     minHeight: 0,
@@ -1798,6 +2005,7 @@ function ExistingPresentationView({ id, publicView = false }) {
                 >
                   {slideDims && (
                     <SlideCanvas
+                      key={currentSlide}
                       slide={slideForCanvas}
                       index={currentSlide}
                       total={slides.length}
@@ -1826,7 +2034,7 @@ function ExistingPresentationView({ id, publicView = false }) {
               </div>
             </div>
           </div>
-          {!publicView ? (
+          {!publicView && !isMobile ? (
             <aside
               aria-label="Работа с ИИ"
               style={{
@@ -1870,6 +2078,50 @@ function ExistingPresentationView({ id, publicView = false }) {
         </section>
       </main>
       </div>
+
+      {/* A6: Mobile AI floating button + overlay */}
+      {!publicView && isMobile && !mobileAiOpen ? (
+        <button
+          type="button"
+          aria-label="Открыть ИИ-ассистент"
+          onClick={() => setMobileAiOpen(true)}
+          style={{
+            position: "fixed", bottom: 20, right: 20, zIndex: 70,
+            width: 52, height: 52, borderRadius: 999,
+            background: "var(--accent)", color: "var(--accent-fg)",
+            display: "grid", placeItems: "center",
+            boxShadow: "0 4px 16px rgba(0,0,0,.22)",
+            border: "none", cursor: "pointer",
+          }}
+        >
+          <Icon name="sparkles" size={22} stroke={2} />
+        </button>
+      ) : null}
+      {!publicView && isMobile && mobileAiOpen ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "var(--bg)", display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid var(--line)" }}>
+            <span style={{ fontWeight: 700, fontSize: 15 }}>ИИ-ассистент</span>
+            <button type="button" onClick={() => setMobileAiOpen(false)} style={{ width: 34, height: 34, borderRadius: 999, border: "1px solid var(--line)", background: "var(--surface)", display: "grid", placeItems: "center", color: "var(--ink-3)" }}>
+              <Icon name="x" size={17} stroke={2} />
+            </button>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            <DeckAiComposer
+              presentationTitle={presentation?.title || ""}
+              presentationId={id}
+              publicView={publicView}
+              busy={deckAiBusy}
+              promptSeed={deckAiPromptSeed}
+              onBusyChange={setDeckAiBusy}
+              onApplyDeckAssist={handleApplyDeckAssist}
+              onAuthRequest={() => setAuthOpen(true)}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {/* B9: Floating format toolbar */}
+      <FloatingFormatToolbar accent={basePreset.accent} />
 
       {designModalOpen ? (
         <div
@@ -3663,11 +3915,11 @@ function EditableField({ value, onChange, tag: Tag = "div", style, ...rest }) {
     if (!onChange) return;
     if (ref.current && !active.current) {
       const str = String(value ?? "");
-      if (ref.current.textContent !== str) ref.current.textContent = str;
+      if (ref.current.innerHTML !== str) ref.current.innerHTML = str;
     }
   });
 
-  if (!onChange) return <Tag style={style} {...rest}>{value}</Tag>;
+  if (!onChange) return <Tag style={style} {...rest} dangerouslySetInnerHTML={{ __html: String(value ?? "") }} />;
 
   return (
     <Tag
@@ -3682,12 +3934,12 @@ function EditableField({ value, onChange, tag: Tag = "div", style, ...rest }) {
       onBlur={(e) => {
         active.current = false;
         e.currentTarget.style.boxShadow = "";
-        const newVal = e.currentTarget.textContent;
+        const newVal = e.currentTarget.innerHTML;
         if (newVal !== String(value ?? "")) onChange(newVal);
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
-          e.currentTarget.textContent = String(value ?? "");
+          e.currentTarget.innerHTML = String(value ?? "");
           e.currentTarget.blur();
           e.preventDefault();
         }
@@ -3905,6 +4157,21 @@ function SlideCanvas({
               onChange={onSlideChange ? (v) => onSlideChange({ ...slide, subtitle: v }) : null}
             />
           )}
+          {/* B6: Inline-edit content (string, non-empty, no bullets) */}
+          {typeof slide?.content === "string" && slide.content && !bullets.length && (
+            <EditableField
+              tag="p"
+              style={{
+                fontSize: sp(1.6, 14, 22),
+                lineHeight: 1.5,
+                margin: "3% 0 0",
+                maxWidth: hasRightPanel ? "100%" : "68%",
+                opacity: 0.85,
+              }}
+              value={slide.content}
+              onChange={onSlideChange ? (v) => onSlideChange({ ...slide, content: v }) : null}
+            />
+          )}
           {!subtitle && bullets.length > 0 && (
             <ul style={{ listStyle: "none", padding: 0, margin: "5% 0 0", display: "grid", gap: sp(1.2, 8, 16), maxWidth: hasRightPanel ? "100%" : "68%" }}>
               {bullets.map((item, bulletIndex) => (
@@ -4006,6 +4273,43 @@ function SlideCanvas({
           </div>
         )}
       </div>
+      {/* B6: two_column layout */}
+      {slide?.type === "two_column" && slide?.content && typeof slide.content === "object" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4%", marginTop: "2%" }}>
+          {["left", "right"].map((side) => {
+            const col = slide.content[side];
+            if (!col) return null;
+            return (
+              <div key={side} style={{ minWidth: 0 }}>
+                {col.heading && (
+                  <EditableField
+                    tag="h3"
+                    style={{ fontSize: sp(2, 14, 24), fontWeight: 700, margin: "0 0 3%", fontFamily: "var(--font-display)" }}
+                    value={col.heading}
+                    onChange={onSlideChange ? (v) => onSlideChange({ ...slide, content: { ...slide.content, [side]: { ...col, heading: v } } }) : null}
+                  />
+                )}
+                {Array.isArray(col.bullets) && col.bullets.length > 0 && (
+                  <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: sp(0.8, 6, 12) }}>
+                    {col.bullets.map((b, bi) => (
+                      <li key={bi} style={{ fontSize: sp(1.4, 12, 20), lineHeight: 1.4 }}>
+                        <EditableField
+                          tag="span"
+                          value={String(b)}
+                          onChange={onSlideChange ? (v) => {
+                            const nb = col.bullets.map((x, xi) => xi === bi ? v : x);
+                            onSlideChange({ ...slide, content: { ...slide.content, [side]: { ...col, bullets: nb } } });
+                          } : null}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
       {showCornerBR || showWmBR ? (
         <div
           style={{
@@ -4064,6 +4368,95 @@ function SlideThumbnail({
 const SLIDE_FILMSTRIP_WIDTH = 198;
 const SLIDE_FILMSTRIP_THUMB_RADIUS = 8;
 
+/** A1: Sortable slide item for the filmstrip. */
+function SortableSlideItem({ id, slide, index, slidesLen, active: isActive, locked, accent, preset, fontScale, pageNumberMode, watermarkMode, slideWidth, slideHeight, onSlideSelect, onDeleteSlide, onDuplicateSlide, slideMenuIndex, onSlideMenuChange }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    display: "flex",
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 5,
+    position: "relative",
+  };
+  const menuOpen = slideMenuIndex === index;
+  return (
+    <div ref={setNodeRef} style={style}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, paddingTop: 5 }}>
+        <span {...attributes} {...listeners} style={{ cursor: "grab", color: "var(--ink-4)", display: "flex", alignItems: "center" }}>
+          <Icon name="grip-vertical" size={12} stroke={2} />
+        </span>
+        <span style={{ width: 22, flexShrink: 0, textAlign: "right", fontSize: 12, fontFamily: "var(--font-mono)", fontWeight: 600, color: isActive ? accent : "var(--ink-4)", lineHeight: 1 }}>
+          {index + 1}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={() => onSlideSelect(index)}
+        aria-disabled={locked}
+        title={locked ? "Слайд откроется после пополнения лимита слайдов" : getSlideTitle(slide, index)}
+        style={{
+          flex: 1, minWidth: 0, margin: 0, padding: 4,
+          borderRadius: SLIDE_FILMSTRIP_THUMB_RADIUS + 2,
+          border: isDragging ? "2px solid var(--accent)" : "none",
+          background: isActive ? `color-mix(in srgb, ${accent} 14%, transparent)` : "transparent",
+          cursor: locked ? "not-allowed" : "pointer", outline: "none", textAlign: "left",
+          transition: "background 0.15s, opacity 0.15s",
+          boxShadow: "none", opacity: locked ? 0.72 : 1, position: "relative",
+        }}
+      >
+        <div style={{ position: "relative", borderRadius: SLIDE_FILMSTRIP_THUMB_RADIUS, overflow: "hidden" }}>
+          <SlideThumbnail slide={slide} index={index} total={slidesLen} preset={preset} fontScale={fontScale} pageNumberMode={pageNumberMode} watermarkMode={watermarkMode} slideWidth={slideWidth} slideHeight={slideHeight} cornerRadius={SLIDE_FILMSTRIP_THUMB_RADIUS} />
+          {locked ? (
+            <div aria-hidden style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "color-mix(in srgb, var(--ink) 38%, transparent)", pointerEvents: "none" }}>
+              <Icon name="lock" size={28} stroke={2} style={{ color: "rgba(255,255,255,.92)" }} />
+            </div>
+          ) : null}
+        </div>
+        {/* B1: More menu */}
+        {!locked && onDeleteSlide && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onSlideMenuChange(menuOpen ? null : index); }}
+            className="filmstrip-more-btn"
+            style={{
+              position: "absolute", top: 2, right: 2, width: 22, height: 22,
+              borderRadius: 6, background: "rgba(255,255,255,.85)", border: "1px solid var(--line)",
+              display: "grid", placeItems: "center", color: "var(--ink-3)",
+              cursor: "pointer", opacity: menuOpen ? 1 : 0, transition: "opacity .15s",
+              zIndex: 5,
+            }}
+          >
+            <Icon name="more-vertical" size={13} stroke={2} />
+          </button>
+        )}
+        {menuOpen && (
+          <div
+            style={{
+              position: "absolute", top: 26, right: 0, zIndex: 50, minWidth: 130,
+              padding: 4, borderRadius: 10, border: "1px solid var(--line)",
+              background: "var(--surface)", boxShadow: "0 6px 18px rgba(0,0,0,.12)",
+              display: "flex", flexDirection: "column", gap: 2,
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button type="button" onClick={(e) => { e.stopPropagation(); onSlideMenuChange(null); onDuplicateSlide?.(index); }} style={{ width: "100%", padding: "7px 10px", borderRadius: 6, background: "transparent", fontSize: 12, fontWeight: 600, color: "var(--ink-2)", textAlign: "left", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <Icon name="copy" size={13} stroke={2} /> Дублировать
+            </button>
+            {slidesLen > 1 && (
+              <button type="button" onClick={(e) => { e.stopPropagation(); onSlideMenuChange(null); onDeleteSlide?.(index); }} style={{ width: "100%", padding: "7px 10px", borderRadius: 6, background: "transparent", fontSize: 12, fontWeight: 600, color: "#b91c1c", textAlign: "left", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <Icon name="trash-2" size={13} stroke={2} /> Удалить
+              </button>
+            )}
+          </div>
+        )}
+      </button>
+    </div>
+  );
+}
+
 function SlideFilmstripSidebar({
   slides,
   currentSlide,
@@ -4080,6 +4473,11 @@ function SlideFilmstripSidebar({
   onAppendSlidePrompt = null,
   moveSlide,
   leadingInsetPx = 8,
+  onReorder = null,
+  onDeleteSlide = null,
+  onDuplicateSlide = null,
+  slideMenuIndex = null,
+  onSlideMenuChange = null,
 }) {
   const activeRowRef = useRef(null);
 
@@ -4089,8 +4487,52 @@ function SlideFilmstripSidebar({
 
   const navDisabled = unlockedSlideCount <= 1;
 
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const slideIds = useMemo(() => slides.map((_, i) => `filmstrip-slide-${i}`), [slides.length]);
+
+  function handleDragEnd(event) {
+    const { active, over } = event;
+    if (!active || !over || active.id === over.id) return;
+    const oldIndex = slideIds.indexOf(String(active.id));
+    const newIndex = slideIds.indexOf(String(over.id));
+    if (oldIndex >= 0 && newIndex >= 0) onReorder?.(oldIndex, newIndex);
+  }
+
+  const filmstripContent = (
+    <>
+      {slides.map((slide, index) => {
+        const active = currentSlide === index;
+        const locked = index >= unlockedSlideCount;
+        return (
+          <SortableSlideItem
+            key={slideIds[index]}
+            id={slideIds[index]}
+            slide={slide}
+            index={index}
+            slidesLen={slides.length}
+            active={active}
+            locked={locked}
+            accent={accent}
+            preset={preset}
+            fontScale={fontScale}
+            pageNumberMode={pageNumberMode}
+            watermarkMode={watermarkMode}
+            slideWidth={slideWidth}
+            slideHeight={slideHeight}
+            onSlideSelect={onSlideSelect}
+            onDeleteSlide={onDeleteSlide}
+            onDuplicateSlide={onDuplicateSlide}
+            slideMenuIndex={slideMenuIndex}
+            onSlideMenuChange={onSlideMenuChange}
+          />
+        );
+      })}
+    </>
+  );
+
   return (
     <div
+      className="filmstrip-sidebar"
       style={{
         width: SLIDE_FILMSTRIP_WIDTH,
         flexShrink: 0,
@@ -4119,96 +4561,18 @@ function SlideFilmstripSidebar({
           WebkitOverflowScrolling: "touch",
         }}
       >
-        {slides.map((slide, index) => {
-          const active = currentSlide === index;
-          const locked = index >= unlockedSlideCount;
-          return (
-            <div
-              key={`filmstrip-${index}-${getSlideTitle(slide, index)}`}
-              ref={active ? activeRowRef : undefined}
-              style={{
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "flex-start",
-                gap: 5,
-              }}
-            >
-              <span
-                style={{
-                  width: 22,
-                  flexShrink: 0,
-                  textAlign: "right",
-                  fontSize: 12,
-                  fontFamily: "var(--font-mono)",
-                  fontWeight: 600,
-                  color: active ? accent : "var(--ink-4)",
-                  paddingTop: 5,
-                  lineHeight: 1,
-                }}
-              >
-                {index + 1}
-              </span>
-              <button
-                type="button"
-                onClick={() => onSlideSelect(index)}
-                aria-disabled={locked}
-                title={locked ? "Слайд откроется после пополнения лимита слайдов" : getSlideTitle(slide, index)}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  margin: 0,
-                  padding: 4,
-                  borderRadius: SLIDE_FILMSTRIP_THUMB_RADIUS + 2,
-                  border: "none",
-                  background: active ? `color-mix(in srgb, ${accent} 14%, transparent)` : "transparent",
-                  cursor: locked ? "not-allowed" : "pointer",
-                  outline: "none",
-                  textAlign: "left",
-                  transition: "background 0.15s, opacity 0.15s",
-                  boxShadow: "none",
-                  opacity: locked ? 0.72 : 1,
-                  position: "relative",
-                }}
-              >
-                <div
-                  style={{
-                    position: "relative",
-                    borderRadius: SLIDE_FILMSTRIP_THUMB_RADIUS,
-                    overflow: "hidden",
-                  }}
-                >
-                  <SlideThumbnail
-                    slide={slide}
-                    index={index}
-                    total={slides.length}
-                    preset={preset}
-                    fontScale={fontScale}
-                    pageNumberMode={pageNumberMode}
-                    watermarkMode={watermarkMode}
-                    slideWidth={slideWidth}
-                    slideHeight={slideHeight}
-                    cornerRadius={SLIDE_FILMSTRIP_THUMB_RADIUS}
-                  />
-                  {locked ? (
-                    <div
-                      aria-hidden
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        display: "grid",
-                        placeItems: "center",
-                        background: "color-mix(in srgb, var(--ink) 38%, transparent)",
-                        pointerEvents: "none",
-                      }}
-                    >
-                      <Icon name="lock" size={28} stroke={2} style={{ color: "rgba(255,255,255,.92)" }} />
-                    </div>
-                  ) : null}
-                </div>
-              </button>
-            </div>
-          );
-        })}
+        {onReorder ? (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={slideIds} strategy={verticalListSortingStrategy}>
+              {filmstripContent}
+            </SortableContext>
+          </DndContext>
+        ) : filmstripContent}
 
         <div
           style={{
@@ -4301,6 +4665,38 @@ function SlideFilmstripSidebar({
         <CanvasButton label="Предыдущий слайд" icon="arrow-left" onClick={() => moveSlide(-1)} disabled={navDisabled} />
         <CanvasButton label="Следующий слайд" icon="arrow-right" onClick={() => moveSlide(1)} disabled={navDisabled} />
       </div>
+    </div>
+  );
+}
+
+/** B9: Floating format toolbar for bold / italic / color. */
+function FloatingFormatToolbar({ accent = "var(--accent)" }) {
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    function check() {
+      const sel = document.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) { setPos(null); return; }
+      const anchor = sel.anchorNode;
+      if (!anchor) { setPos(null); return; }
+      const el = anchor.nodeType === 3 ? anchor.parentElement : anchor;
+      if (!el?.closest("[contenteditable]")) { setPos(null); return; }
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      if (rect.width < 2) { setPos(null); return; }
+      setPos({ top: rect.top - 42, left: rect.left + rect.width / 2 });
+    }
+    document.addEventListener("selectionchange", check);
+    return () => document.removeEventListener("selectionchange", check);
+  }, []);
+  if (!pos) return null;
+  return (
+    <div
+      className="format-toolbar"
+      style={{ top: pos.top, left: pos.left, transform: "translateX(-50%)" }}
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      <button type="button" title="Жирный" onMouseDown={(e) => { e.preventDefault(); document.execCommand("bold"); }}>B</button>
+      <button type="button" title="Курсив" style={{ fontStyle: "italic" }} onMouseDown={(e) => { e.preventDefault(); document.execCommand("italic"); }}>I</button>
+      <button type="button" title="Акцентный цвет" style={{ color: accent }} onMouseDown={(e) => { e.preventDefault(); document.execCommand("foreColor", false, accent); }}>A</button>
     </div>
   );
 }
