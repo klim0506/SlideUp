@@ -1573,7 +1573,7 @@ function ExistingPresentationView({ id, publicView = false }) {
 
   return (
     <div
-      className={`su-page editor-dark${darkMode ? " editor-actual-dark" : ""}`}
+      className={`su-page editor-dark editor-v2 editor-v2-page${darkMode ? " editor-actual-dark" : ""}`}
       style={{ height: "100vh", overflow: "hidden", background: "var(--bg)", color: "var(--ink)", display: "flex", flexDirection: "column" }}
     >
       <AppHeader user={user} active="library" onLibrary={() => navigate(publicView ? "/" : "/dashboard")} onLogout={() => { logout(); navigate("/"); }} />
@@ -1605,6 +1605,18 @@ function ExistingPresentationView({ id, publicView = false }) {
         <section style={{ minWidth: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           {/* ── Title row ── */}
           <div style={{ marginBottom: 12, flexShrink: 0, minWidth: 0 }}>
+            {!publicView ? (
+              <nav
+                className="editor-v2-breadcrumb"
+                aria-label="Навигация"
+                style={{ marginBottom: 6 }}
+              >
+                <button type="button" onClick={() => navigate("/dashboard")}>
+                  Презентации
+                </button>
+                <span data-sep aria-hidden>/</span>
+              </nav>
+            ) : null}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", minWidth: 0, gap: 10, flexWrap: "wrap" }}>
               {publicView ? (
                 <h1
@@ -4432,6 +4444,8 @@ function SortableSlideItem({ id, slide, index, slidesLen, active: isActive, lock
         type="button"
         onClick={() => onSlideSelect(index)}
         aria-disabled={locked}
+        className="filmstrip-thumb"
+        data-active={isActive ? "true" : "false"}
         title={locked ? "Слайд откроется после пополнения лимита слайдов" : getSlideTitle(slide, index)}
         style={{
           flex: 1, minWidth: 0, margin: 0, padding: 4,
@@ -4640,6 +4654,7 @@ function SlideFilmstripSidebar({
             onClick={onAppendSlidePrompt || undefined}
             title="Создать новый слайд через ИИ"
             aria-label="Создать новый слайд через ИИ"
+            className="filmstrip-add-slide"
             style={{
               flex: 1,
               minWidth: 0,

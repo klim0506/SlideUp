@@ -21,6 +21,16 @@ class GenerationSettingsAdmin(admin.ModelAdmin):
             },
         ),
         (
+            "Anthropic API",
+            {
+                "fields": ("api_max_tokens",),
+                "description": (
+                    "Cap на длину ответа Claude. Поднимайте, если нужны более"
+                    " насыщенные слайды (SVG-инфографика, плотные сетки)."
+                ),
+            },
+        ),
+        (
             "Claude CLI",
             {
                 "fields": (
