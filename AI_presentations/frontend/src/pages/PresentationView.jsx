@@ -15,6 +15,7 @@ import {
   presentationStyleCaption,
 } from "@/lib/design";
 import { HERO_SOURCE_ACCEPT, LandingHeroComposer, Stepper, StylePicker, isHeroPromptValid, slidesDeclension } from "@/pages/Home";
+import { HERO_EXAMPLE_PROMPTS, useTypewriterPlaceholder } from "@/lib/useTypewriterPlaceholder";
 import { SlideHistoryTab } from "@/components/presentation/SlideHistoryTab";
 import { SlideVersionsColumn } from "@/components/presentation/SlideVersionsColumn";
 import { apiFetch, apiJson, clearTokens, getAccessToken, getMe, logout, navigate } from "@/lib/api";
@@ -4490,9 +4491,33 @@ function EditorEmptyHero({
   const [busy, setBusy] = useState(false);
   const [createErr, setCreateErr] = useState("");
   const fileInputRef = useRef(null);
+  const textareaRef = useRef(null);
   const speechRecognitionRef = useRef(null);
   const speechBaseRef = useRef("");
   const [speechListening, setSpeechListening] = useState(false);
+
+  const animatedPlaceholder = useTypewriterPlaceholder(HERO_EXAMPLE_PROMPTS, {
+    paused: prompt.length > 0 || busy,
+  });
+
+  useEffect(() => {
+    // Курсор сразу в поле — пользователь может начать печатать без дополнительных кликов.
+    if (busy) return;
+    const ta = textareaRef.current;
+    if (!ta) return;
+    if (
+      document.activeElement &&
+      document.activeElement !== document.body &&
+      document.activeElement !== ta
+    ) {
+      return;
+    }
+    try {
+      ta.focus({ preventScroll: true });
+    } catch {
+      ta.focus();
+    }
+  }, [busy]);
 
   const speechSupported =
     typeof window !== "undefined" &&
@@ -4590,6 +4615,7 @@ function EditorEmptyHero({
     <div className="editor-empty-hero">
       <div className="hero-composer hero-composer--flat editor-empty-hero__composer">
         <textarea
+          ref={textareaRef}
           value={prompt}
           onChange={(event) => {
             setCreateErr("");
@@ -4601,9 +4627,10 @@ function EditorEmptyHero({
               void handleSubmit();
             }
           }}
-          placeholder="Например: стратегия запуска ИИ-продукта для B2B SaaS на 5 слайдов"
+          placeholder={animatedPlaceholder || "Например: стратегия запуска ИИ-продукта для B2B SaaS на 5 слайдов"}
           className="hero-textarea"
           disabled={busy}
+          autoFocus
         />
 
         {docFile ? (
