@@ -33,9 +33,6 @@ function getRoute() {
   if (window.location.pathname === "/generating") {
     return { name: "generating" };
   }
-  if (window.location.pathname === "/create") {
-    return { name: "create" };
-  }
   if (window.location.pathname.startsWith("/legal/")) {
     return { name: "legal" };
   }
@@ -68,9 +65,6 @@ function App() {
   }
   if (route.name === "generating") {
     return <Generating />;
-  }
-  if (route.name === "create") {
-    return <PresentationView createMode />;
   }
   if (route.name === "legal") {
     return <LegalPage />;

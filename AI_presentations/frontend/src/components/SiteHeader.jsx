@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { Icon } from "@/lib/design";
 import { LEGAL } from "@/lib/legal";
-import { navigate } from "@/lib/api";
+import { createEmptyPresentationAndOpen, getAccessToken, navigate } from "@/lib/api";
 
 function scrollToLandingSection(elementId) {
   const run = () => document.getElementById(elementId)?.scrollIntoView({ behavior: "smooth" });
@@ -14,11 +15,24 @@ function scrollToLandingSection(elementId) {
 
 /** Маркетинговая шапка лендинга: одинаковые левая/центр/правая колонки на главной и юридических страницах. */
 export default function SiteHeader({ user, onLogin }) {
-  const goCreate = () => {
-    if (window.location.pathname === "/create") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } else {
-      navigate("/create");
+  const [createBusy, setCreateBusy] = useState(false);
+
+  const goCreate = async () => {
+    if (createBusy) return;
+    if (!getAccessToken()) {
+      if (window.location.pathname !== "/") {
+        navigate("/");
+        window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 120);
+      } else {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      return;
+    }
+    setCreateBusy(true);
+    try {
+      await createEmptyPresentationAndOpen();
+    } catch {
+      setCreateBusy(false);
     }
   };
 
@@ -91,8 +105,8 @@ export default function SiteHeader({ user, onLogin }) {
             Войти
           </button>
         )}
-        <button type="button" className="su-btn su-btn-accent" style={{ fontSize: 15 }} onClick={goCreate}>
-          Создать презентацию
+        <button type="button" className="su-btn su-btn-accent" style={{ fontSize: 15 }} onClick={goCreate} disabled={createBusy}>
+          {createBusy ? "Создаём…" : "Создать презентацию"}
         </button>
       </div>
     </header>

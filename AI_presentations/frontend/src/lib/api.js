@@ -275,3 +275,21 @@ export function navigate(path) {
   window.history.pushState({}, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
+
+/** Create an empty presentation and navigate the user to its editor. */
+export async function createEmptyPresentationAndOpen(options = {}) {
+  if (!getAccessToken()) {
+    const err = new Error("Войдите в аккаунт, чтобы создать новую презентацию.");
+    err.status = 401;
+    throw err;
+  }
+  const data = await apiJson("/api/presentations/", {
+    method: "POST",
+    body: JSON.stringify({
+      title: options.title || "Без названия",
+      theme: options.theme || "light",
+    }),
+  });
+  navigate(`/presentation/${data.id}`);
+  return data;
+}

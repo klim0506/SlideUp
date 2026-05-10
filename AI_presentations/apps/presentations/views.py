@@ -64,9 +64,18 @@ class PresentationViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def create(self, request, *args, **kwargs):
+        title = (request.data.get("title") or "Без названия").strip() or "Без названия"
+        theme = (request.data.get("theme") or "light").strip() or "light"
+        presentation = Presentation.objects.create(
+            user=request.user,
+            title=title,
+            theme=theme,
+            slides=[],
+            slide_histories={},
+        )
         return Response(
-            {"detail": 'Use POST /api/generate/ to create presentations.'},
-            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+            self.get_serializer(presentation).data,
+            status=status.HTTP_201_CREATED,
         )
 
     @action(detail=True, methods=["patch"], url_path="theme")

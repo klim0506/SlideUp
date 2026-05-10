@@ -3,7 +3,7 @@ import { AppHeader } from "@/components/AppHeader";
 import AuthModal from "@/components/AuthModal";
 import SiteFooter from "@/components/SiteFooter";
 import { Icon } from "@/lib/design";
-import { apiJson, getAccessToken, getMe, navigate } from "@/lib/api";
+import { apiJson, createEmptyPresentationAndOpen, getAccessToken, getMe, navigate } from "@/lib/api";
 import { studentUsageSlidesSummary } from "@/lib/planLimits";
 
 const PACKS = [
@@ -70,6 +70,24 @@ export default function Usage() {
 
   const slidesLeft = usage?.slides_limit == null ? null : Math.max(usage.slides_limit - usage.slides_used, 0);
   const log = usage?.log?.length ? usage.log : DEMO_LOG;
+  const [createBusy, setCreateBusy] = useState(false);
+
+  async function handleCreateNewPresentation() {
+    if (createBusy) return;
+    if (!getAccessToken()) {
+      setAuthOpen(true);
+      return;
+    }
+    setCreateBusy(true);
+    setError("");
+    try {
+      await createEmptyPresentationAndOpen();
+    } catch (err) {
+      if (err.status === 401) setAuthOpen(true);
+      else setError(err.message || "Презентацию сейчас не удалось создать — попробуйте ещё раз.");
+      setCreateBusy(false);
+    }
+  }
 
   async function loadUsage() {
     if (!getAccessToken()) {
@@ -130,8 +148,8 @@ export default function Usage() {
               SlideUp считает слайды, показывает остаток и дает выбрать: подписка на месяц, выгодная годовая оплата или разовый пакет.
             </p>
           </div>
-          <button onClick={() => navigate("/create")} className="su-btn su-btn-accent">
-            <Icon name="plus" size={15} /> Создать презентацию
+          <button onClick={handleCreateNewPresentation} disabled={createBusy} className="su-btn su-btn-accent">
+            <Icon name="plus" size={15} /> {createBusy ? "Создаём…" : "Создать презентацию"}
           </button>
         </div>
 

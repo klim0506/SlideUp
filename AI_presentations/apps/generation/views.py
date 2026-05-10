@@ -419,7 +419,18 @@ class AssistDeckView(APIView):
             has_source_file=False,
         )
 
-        if not isinstance(slides, list) or len(slides) < 1:
+        if not isinstance(slides, list):
+            _finish_job(
+                job,
+                status_value=GenerationJob.Status.REJECTED,
+                started_at=started_at,
+                error_message="Slides must be an array.",
+            )
+            return Response(
+                {"detail": "Slides must be an array."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if mode != "append_slide" and len(slides) < 1:
             _finish_job(
                 job,
                 status_value=GenerationJob.Status.REJECTED,

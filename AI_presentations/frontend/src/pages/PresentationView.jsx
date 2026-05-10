@@ -4,7 +4,6 @@ import AuthModal from "@/components/AuthModal";
 import UpsellModal from "@/components/UpsellModal";
 import {
   Icon,
-  PITCH_SLIDES,
   STYLE_PRESETS,
   CUSTOM_THEME_ID,
   buildCustomPreset,
@@ -14,7 +13,7 @@ import {
   normalizeLegacyThemeId,
   presentationStyleCaption,
 } from "@/lib/design";
-import { HERO_SOURCE_ACCEPT, Stepper, StylePicker, isHeroPromptValid, slidesDeclension } from "@/pages/Home";
+import { HERO_SOURCE_ACCEPT } from "@/pages/Home";
 import { SlideHistoryTab } from "@/components/presentation/SlideHistoryTab";
 import { SlideVersionsColumn } from "@/components/presentation/SlideVersionsColumn";
 import { apiFetch, apiJson, clearTokens, getAccessToken, getMe, logout, navigate } from "@/lib/api";
@@ -132,324 +131,7 @@ function scaledClamp(minPx, vw, maxPx, scale) {
 }
 
 export default function PresentationView(props) {
-  if (props.createMode) {
-    return <CreatePresentationWorkspace />;
-  }
   return <ExistingPresentationView {...props} />;
-}
-
-function CreatePresentationWorkspace() {
-  const [user, setUser] = useState(null);
-  const [prompt, setPrompt] = useState("");
-  const [slideCount, setSlideCount] = useState(5);
-  const [styleId, setStyleId] = useState("light");
-  const [docFile, setDocFile] = useState(null);
-  const [createBusy, setCreateBusy] = useState(false);
-  const [createErr, setCreateErr] = useState("");
-  const [authOpen, setAuthOpen] = useState(false);
-  const [authIntent, setAuthIntent] = useState("login");
-  const [upsellOpen, setUpsellOpen] = useState(false);
-  const [slideAreaEl, setSlideAreaEl] = useState(null);
-  const [slideDims, setSlideDims] = useState(null);
-  const fileInputRef = useRef(null);
-  const pendingSlideCountAfterAuthRef = useRef(null);
-
-  const sampleSlide = useMemo(
-    () => PITCH_SLIDES.find((slide) => slide.kind === "cover") || PITCH_SLIDES[0] || null,
-    [],
-  );
-  const previewPreset = useMemo(
-    () => STYLE_PRESETS.find((item) => item.id === styleId) || STYLE_PRESETS[0],
-    [styleId],
-  );
-
-  useEffect(() => {
-    getMe().then(setUser).catch(() => setUser(null));
-  }, []);
-
-  useEffect(() => {
-    const plan = user?.plan || "free";
-    const preset = STYLE_PRESETS.find((p) => p.id === styleId);
-    if (preset && !canUnlockPreset(plan, preset)) {
-      setStyleId("light");
-    }
-  }, [user?.plan, styleId]);
-
-  useEffect(() => {
-    if (!slideAreaEl) return;
-    const ro = new ResizeObserver(([entry]) => {
-      const { width, height } = entry.contentRect;
-      if (width <= 0 || height <= 0) return;
-      const hByWidth = width * 9 / 16;
-      if (hByWidth <= height) {
-        setSlideDims({ w: Math.floor(width), h: Math.floor(hByWidth) });
-      } else {
-        setSlideDims({ w: Math.floor(height * 16 / 9), h: Math.floor(height) });
-      }
-    });
-    ro.observe(slideAreaEl);
-    return () => ro.disconnect();
-  }, [slideAreaEl]);
-
-  async function handleCreate(options = {}) {
-    setCreateErr("");
-    if (!isHeroPromptValid(prompt)) {
-      setCreateErr("Расскажите тему чуть подробнее — от 4 символов без лишних пробелов по краям.");
-      return;
-    }
-    const trimmed = prompt.trim();
-    const requestedSlideCount = options.slideCount ?? slideCount;
-
-    if (docFile) {
-      setCreateBusy(true);
-      try {
-        const fd = new FormData();
-        fd.append("prompt", trimmed);
-        fd.append("slides_count", String(requestedSlideCount));
-        fd.append("theme", styleId);
-        fd.append("source_file", docFile);
-        const data = await apiJson("/api/generate/", { method: "POST", body: fd });
-        sessionStorage.removeItem("genConfig");
-        navigate(`/presentation/${data.id}`);
-      } catch (e) {
-        setCreateErr(e?.message || "Презентация не создалась — можно попробовать ещё раз чуть позже.");
-      } finally {
-        setCreateBusy(false);
-      }
-      return;
-    }
-
-    sessionStorage.setItem(
-      "genConfig",
-      JSON.stringify({
-        prompt: trimmed,
-        slides_count: requestedSlideCount,
-        theme: styleId,
-        source_file_name: "",
-        source_mime: "",
-      }),
-    );
-    navigate("/generating");
-  }
-
-  async function handleAuthSuccess() {
-    const pending = pendingSlideCountAfterAuthRef.current;
-    const intent = authIntent;
-    pendingSlideCountAfterAuthRef.current = null;
-    setAuthIntent("login");
-
-    if (pending != null) setSlideCount(pending);
-
-    try {
-      const me = await getMe();
-      setUser(me);
-    } catch {
-      setUser(null);
-    }
-
-    if (intent === "continue-project") {
-      await handleCreate({ slideCount: pending ?? slideCount });
-      return;
-    }
-
-    navigate("/dashboard");
-  }
-
-  const activeStyleName = previewPreset?.name || "Светлый";
-  const canSubmitCreate = isHeroPromptValid(prompt);
-
-  return (
-    <div
-      className="su-page editor-dark"
-      style={{ height: "100vh", overflow: "hidden", background: "var(--bg)", color: "var(--ink)", display: "flex", flexDirection: "column" }}
-    >
-      <AppHeader user={user} active="library" onLibrary={() => navigate("/dashboard")} onLogout={() => { logout(); navigate("/"); }} />
-
-      <main
-        className="viewer-layout"
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-          width: "100%",
-          overflow: "hidden",
-          padding: "20px 24px 20px",
-        }}
-      >
-        <section style={{ minWidth: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <div style={{ marginBottom: 12, flexShrink: 0, minWidth: 0, padding: "4px 2px 0" }}>
-            <div style={{ display: "flex", alignItems: "center", minWidth: 0, gap: 12, marginBottom: 6 }}>
-              <h1
-                style={{
-                  margin: 0,
-                  padding: 0,
-                  fontFamily: "var(--font-display)",
-                  fontSize: "clamp(22px, 2.65vw, 30px)",
-                  lineHeight: 1.1,
-                  letterSpacing: "-0.035em",
-                  fontWeight: 750,
-                  wordBreak: "break-word",
-                }}
-              >
-                Новая презентация
-              </h1>
-            </div>
-            <div style={{ marginTop: 5, display: "flex", gap: 10, alignItems: "center", color: "var(--ink-3)", fontSize: 12, flexWrap: "wrap" }}>
-              <span>{slideCount} {slidesDeclension(slideCount)}</span>
-              <span style={{ opacity: 0.4 }}>·</span>
-              <span>{activeStyleName}</span>
-              <span style={{ opacity: 0.4 }}>·</span>
-              <span>{docFile?.name || "Только описание"}</span>
-            </div>
-          </div>
-
-          <div
-            style={{
-              flex: 1,
-              minHeight: 0,
-              display: "flex",
-              flexDirection: "column",
-              background: "rgba(255,255,255,.72)",
-              border: "1px solid var(--line)",
-              borderRadius: 16,
-              padding: 16,
-              boxShadow: "0 1px 2px rgba(32,33,36,.04), 0 10px 28px rgba(32,33,36,.06)",
-              backdropFilter: "blur(10px)",
-            }}
-          >
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.15fr) minmax(360px, .85fr)", gap: 10, flex: 1, minHeight: 0 }}>
-              <div
-                ref={setSlideAreaEl}
-                style={{
-                  minHeight: 320,
-                  minWidth: 0,
-                  overflow: "hidden",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: 10,
-                  background: "linear-gradient(180deg, rgba(255,255,255,.45), rgba(255,255,255,.18))",
-                  border: "1px solid color-mix(in srgb, var(--line) 88%, white)",
-                }}
-              >
-                {slideDims && sampleSlide ? (
-                  <SlideCanvas
-                    slide={sampleSlide}
-                    index={0}
-                    total={slideCount}
-                    preset={previewPreset}
-                    fontScale={1}
-                    pageNumberMode={DEFAULT_PAGE_NUMBER_MODE}
-                    watermarkMode={DEFAULT_WATERMARK_MODE}
-                    slideWidth={slideDims.w}
-                    slideHeight={slideDims.h}
-                    onSlideChange={null}
-                  />
-                ) : null}
-              </div>
-
-              <div
-                style={{
-                  minHeight: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 10,
-                  padding: 14,
-                  borderRadius: 10,
-                  background: "var(--surface)",
-                  border: "1px solid var(--line)",
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 10 }}>
-                    Запрос к SlideUp
-                  </div>
-                  <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 13, lineHeight: 1.45 }}>
-                    Опишите тему, аудиторию и результат. Мы оставили тот же workspace, что и в редакторе, но вместо готовых слайдов здесь форма создания.
-                  </p>
-                </div>
-
-                <textarea
-                  value={prompt}
-                  onChange={(event) => setPrompt(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmitCreate && !createBusy) {
-                      void handleCreate();
-                    }
-                  }}
-                  placeholder="Например: стратегия запуска ИИ-продукта для B2B SaaS на 5 слайдов"
-                  className="hero-textarea"
-                  style={{ minHeight: 220, margin: 0, flex: 1 }}
-                />
-
-                {docFile ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--accent-soft)", borderRadius: "var(--r-md)", fontSize: 13 }}>
-                    <Icon name="paperclip" size={13} style={{ color: "var(--accent)" }} />
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-2)" }}>{docFile.name}</span>
-                    <button type="button" onClick={() => setDocFile(null)} style={{ color: "var(--ink-3)" }}>
-                      <Icon name="x" size={12} />
-                    </button>
-                  </div>
-                ) : null}
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={HERO_SOURCE_ACCEPT}
-                  style={{ display: "none" }}
-                  onChange={(event) => setDocFile(event.target.files?.[0] ?? null)}
-                />
-
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      className="hero-attach-btn"
-                      aria-label="Вложить файл"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <Icon name="paperclip" size={18} stroke={2} />
-                    </button>
-                    <StylePicker value={styleId} onChange={setStyleId} userPlan={user?.plan || "free"} onLockedPreset={() => setUpsellOpen(true)} />
-                    <Stepper
-                      count={slideCount}
-                      setCount={setSlideCount}
-                      isLoggedIn={Boolean(user)}
-                      onRequestMoreSlidesLogin={(nextCount) => {
-                        pendingSlideCountAfterAuthRef.current = nextCount;
-                        setAuthIntent("continue-project");
-                        setAuthOpen(true);
-                      }}
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    className="su-btn su-btn-accent"
-                    disabled={createBusy || !canSubmitCreate}
-                    onClick={() => void handleCreate()}
-                    style={{ fontSize: 15 }}
-                  >
-                    {createBusy ? "Создаём…" : <>Создать <Icon name="arrow-right" size={16} /></>}
-                  </button>
-                </div>
-
-                {createErr ? <div className="su-user-hint" style={{ marginTop: 4 }}>{createErr}</div> : (
-                  <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                    Ctrl/Cmd + Enter для быстрого запуска генерации.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </section>
-      </main>
-
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSuccess={handleAuthSuccess} />
-      <UpsellModal open={upsellOpen} onClose={() => setUpsellOpen(false)} />
-    </div>
-  );
 }
 
 function ExistingPresentationView({ id, publicView = false }) {
@@ -772,7 +454,8 @@ function ExistingPresentationView({ id, publicView = false }) {
         setAuthOpen(true);
         return;
       }
-      const mode = options?.mode === DECK_AI_MODE_APPEND_SLIDE ? DECK_AI_MODE_APPEND_SLIDE : DECK_AI_MODE_DECK;
+      const requestedMode = options?.mode === DECK_AI_MODE_APPEND_SLIDE ? DECK_AI_MODE_APPEND_SLIDE : DECK_AI_MODE_DECK;
+      const mode = slides.length === 0 ? DECK_AI_MODE_APPEND_SLIDE : requestedMode;
       setDeckAiBusy(true);
       if (mode === DECK_AI_MODE_APPEND_SLIDE) setAppendSlideBusy(true);
       setNotice("");
@@ -2026,7 +1709,7 @@ function ExistingPresentationView({ id, publicView = false }) {
                     background: "transparent",
                   }}
                 >
-                  {slideDims && (
+                  {slideDims && slides.length > 0 && slideForCanvas ? (
                     <SlideCanvas
                       key={currentSlide}
                       slide={slideForCanvas}
@@ -2040,20 +1723,30 @@ function ExistingPresentationView({ id, publicView = false }) {
                       slideHeight={slideDims.h}
                       onSlideChange={!publicView ? handleInlineSlideEdit : null}
                     />
-                  )}
+                  ) : slideDims && slides.length === 0 ? (
+                    <EmptyDeckCanvas
+                      preset={basePreset}
+                      slideWidth={slideDims.w}
+                      slideHeight={slideDims.h}
+                      onAppendSlidePrompt={!publicView ? handleRequestAppendSlide : null}
+                      appendSlideBusy={appendSlideBusy}
+                    />
+                  ) : null}
                 </div>
-                <SlideVersionsColumn
-                  variant="below"
-                  versionsChrono={currentSlideVersionsChrono}
-                  slideIndex={currentSlide}
-                  slidesLen={slides.length}
-                  preset={basePreset}
-                  onActivate={handleRestoreCurrentSlide}
-                  onPromptAi={handlePromptCurrentSlideVariant}
-                  localAiBusy={localAiBusy}
-                  busy={persistBusy}
-                  publicView={publicView}
-                />
+                {slides.length > 0 ? (
+                  <SlideVersionsColumn
+                    variant="below"
+                    versionsChrono={currentSlideVersionsChrono}
+                    slideIndex={currentSlide}
+                    slidesLen={slides.length}
+                    preset={basePreset}
+                    onActivate={handleRestoreCurrentSlide}
+                    onPromptAi={handlePromptCurrentSlideVariant}
+                    localAiBusy={localAiBusy}
+                    busy={persistBusy}
+                    publicView={publicView}
+                  />
+                ) : null}
               </div>
             </div>
           </div>
@@ -4030,6 +3723,65 @@ function InlineBarChart({ chart, preset, width, height }) {
       <line x1={padX} y1={padTop + chartH} x2={width - padX} y2={padTop + chartH}
         stroke={preset.ink} strokeOpacity={0.12} strokeWidth={1} />
     </svg>
+  );
+}
+
+function EmptyDeckCanvas({ preset, slideWidth, slideHeight, onAppendSlidePrompt, appendSlideBusy = false }) {
+  return (
+    <div
+      style={{
+        width: slideWidth,
+        height: slideHeight,
+        flexShrink: 0,
+        borderRadius: 12,
+        background: preset.bg,
+        color: preset.ink,
+        position: "relative",
+        overflow: "hidden",
+        border: "1px dashed color-mix(in srgb, var(--accent) 35%, var(--line))",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 14,
+        padding: 24,
+        textAlign: "center",
+      }}
+    >
+      <div
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: 999,
+          background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+          color: preset.accent,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <Icon name="sparkles" size={26} stroke={2} />
+      </div>
+      <div style={{ maxWidth: 460 }}>
+        <div style={{ fontSize: 18, fontWeight: 750, letterSpacing: "-0.01em", marginBottom: 6 }}>
+          Здесь пока нет слайдов
+        </div>
+        <div style={{ fontSize: 14, lineHeight: 1.45, color: "color-mix(in srgb, var(--ink) 70%, transparent)" }}>
+          Опишите тему слайда в панели ИИ справа или нажмите «+» — мы создадим первый слайд и продолжим презентацию вместе с вами.
+        </div>
+      </div>
+      {onAppendSlidePrompt ? (
+        <button
+          type="button"
+          className="su-btn su-btn-accent"
+          disabled={appendSlideBusy}
+          onClick={onAppendSlidePrompt}
+          style={{ padding: "10px 16px", fontSize: 14, display: "inline-flex", alignItems: "center", gap: 6 }}
+        >
+          <Icon name="plus" size={15} stroke={2} />
+          {appendSlideBusy ? "Создаём слайд…" : "Создать первый слайд"}
+        </button>
+      ) : null}
+    </div>
   );
 }
 

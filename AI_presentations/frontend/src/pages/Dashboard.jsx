@@ -3,7 +3,7 @@ import { AppHeader } from "@/components/AppHeader";
 import AuthModal from "@/components/AuthModal";
 import UpsellModal from "@/components/UpsellModal";
 import { Icon, SlideThumb, presentationStyleCaption } from "@/lib/design";
-import { apiFetch, apiJson, getAccessToken, getMe, logout, navigate } from "@/lib/api";
+import { apiFetch, apiJson, createEmptyPresentationAndOpen, getAccessToken, getMe, logout, navigate } from "@/lib/api";
 
 function formatDate(value) {
   if (!value) return "";
@@ -34,6 +34,24 @@ export default function Dashboard() {
   const [exportNotice, setExportNotice] = useState("");
   const [upsellOpen, setUpsellOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [createBusy, setCreateBusy] = useState(false);
+
+  async function handleCreateNewPresentation() {
+    if (createBusy) return;
+    if (!getAccessToken()) {
+      setAuthOpen(true);
+      return;
+    }
+    setCreateBusy(true);
+    setError("");
+    try {
+      await createEmptyPresentationAndOpen();
+    } catch (err) {
+      if (err.status === 401) setAuthOpen(true);
+      else setError(err.message || "Презентацию сейчас не удалось создать — попробуйте ещё раз.");
+      setCreateBusy(false);
+    }
+  }
 
   useEffect(() => {
     getMe().then(setUser).catch(() => setUser(null));
@@ -117,8 +135,13 @@ export default function Dashboard() {
             Мои презентации
           </h1>
 
-          <button className="su-btn su-btn-accent" onClick={() => navigate("/create")} style={{ minHeight: 44, paddingInline: 18 }}>
-            <Icon name="plus" size={14} /> Создать презентацию
+          <button
+            className="su-btn su-btn-accent"
+            onClick={handleCreateNewPresentation}
+            disabled={createBusy}
+            style={{ minHeight: 44, paddingInline: 18 }}
+          >
+            <Icon name="plus" size={14} /> {createBusy ? "Создаём…" : "Создать презентацию"}
           </button>
         </div>
 
@@ -133,7 +156,7 @@ export default function Dashboard() {
         {loading ? (
           <LoadingSkeleton />
         ) : filtered.length === 0 ? (
-          <EmptyState onCreate={() => navigate("/create")} hasSearch={search.length > 0} />
+          <EmptyState onCreate={handleCreateNewPresentation} createBusy={createBusy} hasSearch={search.length > 0} />
         ) : (
           <section style={{ display: "grid", gap: 18 }}>
             <div className="su-card" style={toolbarCardStyle}>
@@ -217,7 +240,7 @@ function LoadingSkeleton() {
   );
 }
 
-function EmptyState({ onCreate, hasSearch }) {
+function EmptyState({ onCreate, hasSearch, createBusy = false }) {
   return (
     <div style={{ background: "var(--surface)", border: "1px dashed var(--line-2)", borderRadius: "var(--r-lg)", padding: "max(64px, 8vw) 24px", textAlign: "center" }}>
       <div style={{ width: 56, height: 56, borderRadius: 999, background: "var(--accent-soft)", color: "var(--accent)", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 24 }}>
@@ -230,8 +253,8 @@ function EmptyState({ onCreate, hasSearch }) {
         {hasSearch ? "Попробуйте другой запрос." : "История, экспорт и публичные ссылки появятся здесь после первой генерации."}
       </p>
       {!hasSearch ? (
-        <button onClick={onCreate} className="su-btn su-btn-primary" style={{ padding: "12px 22px", fontSize: 15 }}>
-          <Icon name="plus" size={16} /> Создать презентацию
+        <button onClick={onCreate} disabled={createBusy} className="su-btn su-btn-primary" style={{ padding: "12px 22px", fontSize: 15 }}>
+          <Icon name="plus" size={16} /> {createBusy ? "Создаём…" : "Создать презентацию"}
         </button>
       ) : null}
     </div>
