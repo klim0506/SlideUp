@@ -2262,7 +2262,6 @@ function ExistingPresentationView({ id, publicView = false }) {
             saveStatus={saveStatus}
             collapsed={filmstripCollapsed}
             onCollapsedChange={(next) => setFilmstripCollapsedOverride(next)}
-            forceCollapsed={isEmptyDeck}
           />
 
           <div
@@ -2355,18 +2354,22 @@ function ExistingPresentationView({ id, publicView = false }) {
           {!publicView && !isMobile ? (
             aiAsideCollapsed ? (
               <aside
-                aria-label="Работа с ИИ (свёрнуто)"
+                role="button"
+                tabIndex={0}
+                title="Развернуть панель ИИ"
+                aria-label="Развернуть панель ИИ"
                 className="presentation-ai-aside presentation-ai-aside--collapsed"
+                onClick={() => setAiAsideCollapsedOverride(false)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setAiAsideCollapsedOverride(false);
+                  }
+                }}
               >
-                <button
-                  type="button"
-                  className="presentation-ai-aside__expand"
-                  title="Развернуть панель ИИ"
-                  aria-label="Развернуть панель ИИ"
-                  onClick={() => setAiAsideCollapsedOverride(false)}
-                >
-                  <Icon name="sparkles" size={18} stroke={2} />
-                </button>
+                <span className="presentation-collapsed-rail-glyph" aria-hidden="true">
+                  <Icon name="sparkles" size={26} stroke={2} />
+                </span>
               </aside>
             ) : (
               <aside
@@ -5234,7 +5237,6 @@ function SlideFilmstripSidebar({
   saveStatus = "idle",
   collapsed = false,
   onCollapsedChange = null,
-  forceCollapsed = false,
 }) {
   const activeRowRef = useRef(null);
   const saveBadgeTimerRef = useRef(null);
@@ -5324,58 +5326,22 @@ function SlideFilmstripSidebar({
   if (collapsed) {
     return (
       <div
+        role="button"
+        tabIndex={0}
+        title="Развернуть превью слайдов"
+        aria-label="Развернуть превью слайдов"
         className="filmstrip-sidebar filmstrip-sidebar--collapsed"
-        style={{
-          width: "var(--presentation-filmstrip-collapsed-width, 64px)",
-          flexShrink: 0,
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
-          alignSelf: "stretch",
-          borderRight: "1px solid var(--line)",
-          background: "var(--surface)",
-          overflow: "hidden",
+        onClick={() => onCollapsedChange?.(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onCollapsedChange?.(false);
+          }
         }}
       >
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 12,
-            padding: "14px 10px",
-          }}
-        >
-          {!forceCollapsed ? (
-            <CanvasButton
-              label="Развернуть превью слайдов"
-              icon="panel-left-wide"
-              onClick={() => onCollapsedChange?.(false)}
-              size="30px"
-              iconSize={20}
-              bare
-            />
-          ) : (
-            <div
-              aria-hidden
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 8,
-                color: "var(--ink-3)",
-                opacity: 0.55,
-                fontSize: 11,
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              <Icon name="doc" size={18} stroke={2} />
-              <span>0</span>
-            </div>
-          )}
-        </div>
+        <span className="presentation-collapsed-rail-glyph" aria-hidden="true">
+          <Icon name="panel-left-wide" size={26} stroke={2} />
+        </span>
       </div>
     );
   }

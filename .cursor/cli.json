@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(git)",
+      "Shell(npm)",
+      "Shell(npx)",
+      "Shell(node)",
+      "Shell(python)",
+      "Shell(py)",
+      "Shell(py.exe)",
+      "Shell(pythonw)",
+      "Shell(docker)",
+      "Shell(docker-compose)",
+      "Shell(celery)",
+      "Shell(powershell)",
+      "Shell(pwsh)",
+      "Shell(cmd)",
+      "Read(**/*)",
+      "Write(**/*)",
+      "WebFetch(*)",
+      "Mcp(*:*)"
+    ],
+    "deny": [
+      "Shell(rm)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Write(**/.env)",
+      "Write(**/.env.*)"
+    ]
+  }
+}
