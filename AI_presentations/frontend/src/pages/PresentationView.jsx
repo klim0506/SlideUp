@@ -4716,6 +4716,73 @@ function EditorEmptyHero({
   );
 }
 
+/**
+ * Renders slide HTML inside a fixed 1200×675 design canvas (16:9) and
+ * uniformly scales the whole canvas to fit the available container.
+ *
+ * Generated HTML uses absolute pixel sizing (font-size: 88px, padding: 64px,
+ * min-height: 540px, etc.). We render those rules at their design size, then
+ * apply a single CSS transform so the slide visually fills the parent without
+ * letterboxing. The parent container is already 16:9 (slideDims) so width-
+ * and height-based scale factors match — the slide fills both dimensions.
+ *
+ * Content that exceeds 1200×675 at design size is clipped by the canvas
+ * overflow:hidden. The generation prompt constrains slides to this canvas.
+ */
+const SLIDE_HTML_DESIGN_WIDTH = 1200;
+const SLIDE_HTML_DESIGN_HEIGHT = 675;
+
+function ScaledHtmlSlide({ html, preset }) {
+  const outerRef = useRef(null);
+  const [scale, setScale] = useState(1);
+
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    if (!outer) return;
+    const recalc = () => {
+      const cw = outer.clientWidth;
+      const ch = outer.clientHeight;
+      if (cw <= 0 || ch <= 0) return;
+      setScale(Math.min(cw / SLIDE_HTML_DESIGN_WIDTH, ch / SLIDE_HTML_DESIGN_HEIGHT));
+    };
+    recalc();
+    const ro = new ResizeObserver(recalc);
+    ro.observe(outer);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={outerRef}
+      style={{
+        position: "absolute",
+        inset: 0,
+        overflow: "hidden",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1,
+      }}
+    >
+      <div
+        className="slide-html-canvas"
+        style={{
+          width: SLIDE_HTML_DESIGN_WIDTH,
+          height: SLIDE_HTML_DESIGN_HEIGHT,
+          flexShrink: 0,
+          transform: `scale(${scale})`,
+          transformOrigin: "center center",
+          color: preset.ink,
+          "--accent": preset.accent,
+          fontSize: 16,
+          overflow: "hidden",
+        }}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </div>
+  );
+}
+
 function SlideCanvas({
   slide,
   index,
@@ -4804,6 +4871,64 @@ function SlideCanvas({
         overflow: "hidden",
       };
 
+  const chromeOverlay = (
+    <>
+      {(icon || showWmTR || showCornerTR) ? (
+        <div
+          style={{
+            position: "absolute",
+            top: `${slidePadPct}%`,
+            left: `${slidePadPct}%`,
+            right: `${pageCounterRightPct}%`,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            pointerEvents: "none",
+            zIndex: 2,
+          }}
+        >
+          <div style={{ fontSize: sp(3.2, 20, 40), lineHeight: 1, userSelect: "none" }}>
+            {icon || null}
+          </div>
+          <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: chromeGap }}>
+            {showWmTR ? <div style={watermarkLabelStyle}>SlideUp</div> : null}
+            {showCornerTR ? <div style={pageCounterStyle}>{pageCounterText}</div> : null}
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+
+  if (isHtml) {
+    return (
+      <div style={frameStyle}>
+        <ScaledHtmlSlide
+          html={getSafeSlideHtml(slide, { assets })}
+          preset={preset}
+        />
+        {chromeOverlay}
+        {showCornerBR || showWmBR ? (
+          <div
+            style={{
+              position: "absolute",
+              right: `${pageCounterRightPct}%`,
+              bottom: `${slidePadPct}%`,
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: chromeGap,
+              pointerEvents: "none",
+              zIndex: 2,
+            }}
+          >
+            {showWmBR ? <div style={watermarkLabelStyle}>SlideUp</div> : null}
+            {showCornerBR ? <div style={pageCounterStyle}>{pageCounterText}</div> : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   const canvasInner = (
     <div
       style={{
@@ -4836,13 +4961,7 @@ function SlideCanvas({
         </div>
       </div>
 
-      {isHtml ? (
-        <div
-          className="slide-html-canvas"
-          style={{ flex: 1, minHeight: 0, color: preset.ink, "--accent": preset.accent, fontSize: sp(1.6, 14, 22) }}
-          dangerouslySetInnerHTML={{ __html: getSafeSlideHtml(slide, { assets }) }}
-        />
-      ) : (
+      {(
       <>
       {/* Main grid: text left, visual panel right */}
       <div style={{ display: "grid", gridTemplateColumns: hasRightPanel ? "54% 42%" : "1fr", gap: "4%", alignItems: "center", flex: 1, minHeight: 0 }}>
