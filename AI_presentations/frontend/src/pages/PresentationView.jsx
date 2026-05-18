@@ -7,6 +7,7 @@ import {
   PITCH_SLIDES,
   STYLE_PRESETS,
   CUSTOM_THEME_ID,
+  DEFAULT_DESIGN_ID,
   buildCustomPreset,
   canUnlockPreset,
   canHideWatermark,
@@ -14,7 +15,7 @@ import {
   normalizeLegacyThemeId,
   presentationStyleCaption,
 } from "@/lib/design";
-import { HERO_SOURCE_ACCEPT, LandingHeroComposer, Stepper, StylePicker, isHeroPromptValid, slidesDeclension } from "@/pages/Home";
+import { DesignPicker, HERO_SOURCE_ACCEPT, LandingHeroComposer, Stepper, isHeroPromptValid, slidesDeclension } from "@/pages/Home";
 import { HERO_EXAMPLE_PROMPTS, useTypewriterPlaceholder } from "@/lib/useTypewriterPlaceholder";
 import { SlideHistoryTab } from "@/components/presentation/SlideHistoryTab";
 import { SlideVersionsColumn } from "@/components/presentation/SlideVersionsColumn";
@@ -257,13 +258,12 @@ function CreatePresentationWorkspace() {
   const [user, setUser] = useState(null);
   const [prompt, setPrompt] = useState("");
   const [slideCount, setSlideCount] = useState(5);
-  const [styleId, setStyleId] = useState("light");
+  const [designId, setDesignId] = useState(DEFAULT_DESIGN_ID);
   const [docFile, setDocFile] = useState(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createErr, setCreateErr] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
   const [authIntent, setAuthIntent] = useState("login");
-  const [upsellOpen, setUpsellOpen] = useState(false);
   const [slideAreaEl, setSlideAreaEl] = useState(null);
   const [slideDims, setSlideDims] = useState(null);
   const fileInputRef = useRef(null);
@@ -273,22 +273,11 @@ function CreatePresentationWorkspace() {
     () => PITCH_SLIDES.find((slide) => slide.kind === "cover") || PITCH_SLIDES[0] || null,
     [],
   );
-  const previewPreset = useMemo(
-    () => STYLE_PRESETS.find((item) => item.id === styleId) || STYLE_PRESETS[0],
-    [styleId],
-  );
+  const previewPreset = STYLE_PRESETS[0];
 
   useEffect(() => {
     getMe().then(setUser).catch(() => setUser(null));
   }, []);
-
-  useEffect(() => {
-    const plan = user?.plan || "free";
-    const preset = STYLE_PRESETS.find((p) => p.id === styleId);
-    if (preset && !canUnlockPreset(plan, preset)) {
-      setStyleId("light");
-    }
-  }, [user?.plan, styleId]);
 
   useEffect(() => {
     if (!slideAreaEl) return;
@@ -321,7 +310,7 @@ function CreatePresentationWorkspace() {
         const fd = new FormData();
         fd.append("prompt", trimmed);
         fd.append("slides_count", String(requestedSlideCount));
-        fd.append("theme", styleId);
+        fd.append("design", designId);
         fd.append("source_file", docFile);
         const data = await apiJson("/api/generate/", { method: "POST", body: fd });
         sessionStorage.removeItem("genConfig");
@@ -339,7 +328,7 @@ function CreatePresentationWorkspace() {
       JSON.stringify({
         prompt: trimmed,
         slides_count: requestedSlideCount,
-        theme: styleId,
+        design: designId,
         source_file_name: "",
         source_mime: "",
       }),
@@ -369,8 +358,6 @@ function CreatePresentationWorkspace() {
 
     navigate("/presentation");
   }
-
-  const activeStyleName = previewPreset?.name || "Светлый";
 
   return (
     <div
@@ -411,8 +398,6 @@ function CreatePresentationWorkspace() {
             </div>
             <div style={{ marginTop: 5, display: "flex", gap: 10, alignItems: "center", color: "var(--ink-3)", fontSize: 12, flexWrap: "wrap" }}>
               <span>{slideCount} {slidesDeclension(slideCount)}</span>
-              <span style={{ opacity: 0.4 }}>·</span>
-              <span>{activeStyleName}</span>
               <span style={{ opacity: 0.4 }}>·</span>
               <span>{docFile?.name || "Только описание"}</span>
             </div>
@@ -479,8 +464,8 @@ function CreatePresentationWorkspace() {
                     setPrompt={setPrompt}
                     slideCount={slideCount}
                     setSlideCount={setSlideCount}
-                    styleId={styleId}
-                    setStyleId={setStyleId}
+                    designId={designId}
+                    setDesignId={setDesignId}
                     docFile={docFile}
                     setDocFile={setDocFile}
                     fileInputRef={fileInputRef}
@@ -493,8 +478,6 @@ function CreatePresentationWorkspace() {
                       setAuthIntent("continue-project");
                       setAuthOpen(true);
                     }}
-                    userPlan={user?.plan || "free"}
-                    onLockedStyle={() => setUpsellOpen(true)}
                     onClearCreateErr={() => setCreateErr("")}
                     showSpeech={false}
                   />
@@ -506,7 +489,6 @@ function CreatePresentationWorkspace() {
       </main>
 
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSuccess={handleAuthSuccess} />
-      <UpsellModal open={upsellOpen} onClose={() => setUpsellOpen(false)} />
     </div>
   );
 }
@@ -2325,7 +2307,6 @@ function ExistingPresentationView({ id, publicView = false }) {
                       <EditorEmptyHero
                         presentationId={id}
                         user={user}
-                        initialTheme={presentation?.theme || theme}
                         onAuthRequest={() => setAuthOpen(true)}
                         onUpgradeRequest={() => setUpsellOpen(true)}
                         onGenerated={() => setPresentationReloadNonce((n) => n + 1)}
@@ -4482,14 +4463,13 @@ function InlineBarChart({ chart, preset, width, height }) {
 function EditorEmptyHero({
   presentationId,
   user,
-  initialTheme = "light",
   onAuthRequest,
   onUpgradeRequest,
   onGenerated,
 }) {
   const [prompt, setPrompt] = useState("");
   const [slideCount, setSlideCount] = useState(5);
-  const [styleId, setStyleId] = useState(() => normalizeLegacyThemeId(initialTheme || "light"));
+  const [designId, setDesignId] = useState(DEFAULT_DESIGN_ID);
   const [docFile, setDocFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [createErr, setCreateErr] = useState("");
@@ -4525,8 +4505,6 @@ function EditorEmptyHero({
   const speechSupported =
     typeof window !== "undefined" &&
     !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-
-  const userPlan = user?.plan || "free";
 
   useEffect(() => {
     if (!speechSupported) return undefined;
@@ -4580,13 +4558,6 @@ function EditorEmptyHero({
     }
   }
 
-  useEffect(() => {
-    const preset = STYLE_PRESETS.find((p) => p.id === styleId);
-    if (preset && !canUnlockPreset(userPlan, preset)) {
-      setStyleId("light");
-    }
-  }, [userPlan, styleId]);
-
   async function handleSubmit() {
     setCreateErr("");
     if (!isHeroPromptValid(prompt)) {
@@ -4602,7 +4573,7 @@ function EditorEmptyHero({
       const fd = new FormData();
       fd.append("prompt", prompt.trim());
       fd.append("slides_count", String(slideCount));
-      fd.append("theme", styleId);
+      fd.append("design", designId);
       if (presentationId) fd.append("presentation_id", String(presentationId));
       if (docFile) fd.append("source_file", docFile);
       const data = await apiJson("/api/generate/", { method: "POST", body: fd });
@@ -4687,12 +4658,7 @@ function EditorEmptyHero({
           </div>
 
           <div className="hero-actions">
-            <StylePicker
-              value={styleId}
-              onChange={setStyleId}
-              userPlan={userPlan}
-              onLockedPreset={onUpgradeRequest}
-            />
+            <DesignPicker value={designId} onChange={setDesignId} />
             <Stepper
               count={slideCount}
               setCount={setSlideCount}
@@ -5622,7 +5588,10 @@ function SlideFilmstripSidebar({
                   <span className="su-ai-typing-dot" />
                 </span>
               ) : (
-                <span>Добавить слайд</span>
+                <span style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                  <Icon name="plus" size={18} stroke={2.2} />
+                  <span>Добавить слайд</span>
+                </span>
               )}
             </div>
           </button>

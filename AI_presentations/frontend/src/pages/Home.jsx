@@ -3,8 +3,7 @@ import { AppHeader } from "@/components/AppHeader";
 import AuthModal from "@/components/AuthModal";
 import SiteFooter from "@/components/SiteFooter";
 import SiteHeader from "@/components/SiteHeader";
-import { Icon, PITCH_SLIDES, PRESENTATION_STYLES, STYLE_PRESETS, StylePreview, canUnlockPreset } from "@/lib/design";
-import UpsellModal from "@/components/UpsellModal";
+import { DEFAULT_DESIGN_ID, DESIGNS, Icon, PITCH_SLIDES, PRESENTATION_STYLES } from "@/lib/design";
 import { freeLandingFeatureItems, studentLandingFeatureItems } from "@/lib/planLimits";
 import { setPendingSource } from "@/lib/genHandoff";
 import { getMe, logout, navigate } from "@/lib/api";
@@ -30,8 +29,8 @@ export function isHeroPromptValid(prompt) {
 export default function Home({ workspaceMode = false }) {
   const [prompt, setPrompt] = useState("");
   const [slideCount, setSlideCount] = useState(5);
-  const [styleId, setStyleId] = useState("light");
   const [presentationStyle, setPresentationStyle] = useState("pitch");
+  const [designId, setDesignId] = useState(DEFAULT_DESIGN_ID);
   const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authIntent, setAuthIntent] = useState("login");
@@ -39,7 +38,6 @@ export default function Home({ workspaceMode = false }) {
   const [docFile, setDocFile] = useState(null);
   const [createErr, setCreateErr] = useState("");
   const fileInputRef = useRef(null);
-  const [upsellOpen, setUpsellOpen] = useState(false);
   const draftHydratedRef = useRef(false);
 
   const prevUserRef = useRef(user);
@@ -53,8 +51,8 @@ export default function Home({ workspaceMode = false }) {
     if (memoryDraft) {
       setPrompt(memoryDraft.prompt || "");
       setSlideCount(memoryDraft.slideCount || 5);
-      setStyleId(memoryDraft.styleId || "light");
       setPresentationStyle(memoryDraft.presentationStyle || "pitch");
+      setDesignId(memoryDraft.designId || DEFAULT_DESIGN_ID);
       setDocFile(memoryDraft.docFile || null);
       draftHydratedRef.current = true;
       return;
@@ -69,8 +67,8 @@ export default function Home({ workspaceMode = false }) {
       const parsed = JSON.parse(raw);
       setPrompt(parsed.prompt || "");
       setSlideCount(parsed.slideCount || 5);
-      setStyleId(parsed.styleId || "light");
       setPresentationStyle(parsed.presentationStyle || "pitch");
+      setDesignId(parsed.designId || DEFAULT_DESIGN_ID);
     } catch {
       sessionStorage.removeItem(HERO_DRAFT_STORAGE_KEY);
     } finally {
@@ -83,8 +81,8 @@ export default function Home({ workspaceMode = false }) {
     const draft = {
       prompt,
       slideCount,
-      styleId,
       presentationStyle,
+      designId,
       docFile,
     };
     heroDraftMemory = draft;
@@ -93,11 +91,11 @@ export default function Home({ workspaceMode = false }) {
       JSON.stringify({
         prompt,
         slideCount,
-        styleId,
         presentationStyle,
+        designId,
       }),
     );
-  }, [prompt, slideCount, styleId, presentationStyle, docFile]);
+  }, [prompt, slideCount, presentationStyle, designId, docFile]);
 
   useEffect(() => {
     const wasLoggedIn = prevUserRef.current != null;
@@ -106,14 +104,6 @@ export default function Home({ workspaceMode = false }) {
       setSlideCount(MAX_SLIDES_GUEST);
     }
   }, [user, slideCount]);
-
-  useEffect(() => {
-    const plan = user?.plan || "free";
-    const preset = STYLE_PRESETS.find((p) => p.id === styleId);
-    if (preset && !canUnlockPreset(plan, preset)) {
-      setStyleId("light");
-    }
-  }, [user?.plan, styleId]);
 
   function handleCreate(options = {}) {
     setCreateErr("");
@@ -130,8 +120,8 @@ export default function Home({ workspaceMode = false }) {
       JSON.stringify({
         prompt: trimmed,
         slides_count: requestedSlideCount,
-        theme: styleId,
         style: presentationStyle,
+        design: designId,
         source_file_name: docFile?.name || "",
         source_mime: docFile?.type || "",
       }),
@@ -182,10 +172,10 @@ export default function Home({ workspaceMode = false }) {
         setPrompt={setPrompt}
         slideCount={slideCount}
         setSlideCount={setSlideCount}
-        styleId={styleId}
-        setStyleId={setStyleId}
         presentationStyle={presentationStyle}
         setPresentationStyle={setPresentationStyle}
+        designId={designId}
+        setDesignId={setDesignId}
         onCreate={handleCreate}
         docFile={docFile}
         setDocFile={setDocFile}
@@ -198,15 +188,12 @@ export default function Home({ workspaceMode = false }) {
           setAuthIntent("continue-project");
           setAuthOpen(true);
         }}
-        userPlan={user?.plan || "free"}
-        onLockedStyle={() => setUpsellOpen(true)}
       />
       {!workspaceMode ? <ValueSection onCreate={handleCreate} canSubmitCreate={isHeroPromptValid(prompt)} /> : null}
       {!workspaceMode ? <HowItWorks /> : null}
       {!workspaceMode ? <Pricing onLogin={() => { setAuthIntent("login"); setAuthOpen(true); }} /> : null}
       {!workspaceMode ? <SiteFooter /> : null}
       <AuthModal open={authOpen} onClose={closeAuthModal} onSuccess={handleAuthSuccess} />
-      <UpsellModal open={upsellOpen} onClose={() => setUpsellOpen(false)} />
     </div>
   );
 }
@@ -232,8 +219,8 @@ export function LandingHeroComposer({
   setPrompt,
   slideCount,
   setSlideCount,
-  styleId,
-  setStyleId,
+  designId,
+  setDesignId,
   docFile,
   setDocFile,
   fileInputRef,
@@ -242,8 +229,6 @@ export function LandingHeroComposer({
   submitBusy = false,
   isLoggedIn,
   onRequestMoreSlidesLogin,
-  userPlan = "free",
-  onLockedStyle,
   onClearCreateErr,
   extraHeroActions = null,
   /** На лендинге включён; на экранах «новая презентация» — без микрофона. */
@@ -416,7 +401,7 @@ export function LandingHeroComposer({
 
         <div className="hero-actions">
           {extraHeroActions}
-          <StylePicker value={styleId} onChange={setStyleId} userPlan={userPlan} onLockedPreset={onLockedStyle} />
+          <DesignPicker value={designId} onChange={setDesignId} />
           <Stepper
             count={slideCount}
             setCount={setSlideCount}
@@ -444,10 +429,10 @@ function Hero({
   setPrompt,
   slideCount,
   setSlideCount,
-  styleId,
-  setStyleId,
   presentationStyle,
   setPresentationStyle,
+  designId,
+  setDesignId,
   onCreate,
   docFile,
   setDocFile,
@@ -456,10 +441,7 @@ function Hero({
   onClearCreateErr,
   isLoggedIn,
   onRequestMoreSlidesLogin,
-  userPlan = "free",
-  onLockedStyle,
 }) {
-  const activeStyleName = (STYLE_PRESETS.find((preset) => preset.id === styleId) || STYLE_PRESETS[0]).name;
   const activePresentationStyleName = (PRESENTATION_STYLES.find((s) => s.id === presentationStyle) || PRESENTATION_STYLES[0]).name;
 
   if (workspaceMode) {
@@ -473,7 +455,6 @@ function Hero({
                 <div className="create-workspace-meta">
                   <span>{slideCount} {slidesDeclension(slideCount)}</span>
                   <span>{activePresentationStyleName}</span>
-                  <span>{activeStyleName}</span>
                   <span>{docFile?.name || "Только описание"}</span>
                 </div>
               </div>
@@ -492,8 +473,8 @@ function Hero({
               setPrompt={setPrompt}
               slideCount={slideCount}
               setSlideCount={setSlideCount}
-              styleId={styleId}
-              setStyleId={setStyleId}
+              designId={designId}
+              setDesignId={setDesignId}
               docFile={docFile}
               setDocFile={setDocFile}
               fileInputRef={fileInputRef}
@@ -502,8 +483,6 @@ function Hero({
               submitBusy={false}
               isLoggedIn={isLoggedIn}
               onRequestMoreSlidesLogin={onRequestMoreSlidesLogin}
-              userPlan={userPlan}
-              onLockedStyle={onLockedStyle}
               onClearCreateErr={onClearCreateErr}
               showSpeech={false}
               extraHeroActions={<PresentationStylePicker value={presentationStyle} onChange={setPresentationStyle} />}
@@ -534,8 +513,8 @@ function Hero({
         setPrompt={setPrompt}
         slideCount={slideCount}
         setSlideCount={setSlideCount}
-        styleId={styleId}
-        setStyleId={setStyleId}
+        designId={designId}
+        setDesignId={setDesignId}
         docFile={docFile}
         setDocFile={setDocFile}
         fileInputRef={fileInputRef}
@@ -544,126 +523,11 @@ function Hero({
         submitBusy={false}
         isLoggedIn={isLoggedIn}
         onRequestMoreSlidesLogin={onRequestMoreSlidesLogin}
-        userPlan={userPlan}
-        onLockedStyle={onLockedStyle}
         onClearCreateErr={onClearCreateErr}
       />
 
       <div className="hero-preview-wrap"><HeroPreview /></div>
     </section>
-  );
-}
-
-export function StylePicker({ value, onChange, userPlan = "free", onLockedPreset }) {
-  const [open, setOpen] = useState(false);
-  const [hoveredPresetId, setHoveredPresetId] = useState(null);
-  const pickerRef = useRef(null);
-  const selectedPreset = STYLE_PRESETS.find((preset) => preset.id === value) || STYLE_PRESETS[0];
-  const dropdownHintPreset = STYLE_PRESETS.find((preset) => preset.id === hoveredPresetId) || selectedPreset;
-
-  useEffect(() => {
-    function handleOutsideClick(event) {
-      if (!pickerRef.current?.contains(event.target)) {
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handleOutsideClick);
-    return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, []);
-
-  useEffect(() => {
-    if (!open) {
-      setHoveredPresetId(null);
-    }
-  }, [open]);
-
-  return (
-    <div ref={pickerRef} className={`hero-action-picker${open ? " hero-action-picker--open" : ""}`}>
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-describedby={open ? undefined : "hero-style-hover-tip"}
-        aria-label={`${selectedPreset.name}`}
-        className="hero-action-picker-btn"
-      >
-        <div className="hero-action-picker-thumb">
-          <StylePreview preset={selectedPreset} />
-        </div>
-        <Icon name="chevron-down" size={15} style={{ color: "var(--ink-3)" }} />
-      </button>
-
-      {!open ? (
-        <div id="hero-style-hover-tip" className="hero-style-desc" role="tooltip">
-          <p className="hero-style-desc-kicker">Стиль презентации</p>
-          <p className="hero-style-desc-title">{selectedPreset.name}</p>
-          <p className="hero-style-desc-text">{selectedPreset.description}</p>
-          <span className="hero-style-desc-note">{selectedPreset.note}</span>
-        </div>
-      ) : null}
-
-      {open ? (
-        <div className="hero-style-dropdown" role="listbox" aria-label="Выбор стиля">
-          <div className="hero-style-dropdown-grid">
-            {STYLE_PRESETS.map((preset) => {
-              const locked = !canUnlockPreset(userPlan, preset);
-              return (
-              <button
-                key={preset.id}
-                type="button"
-                role="option"
-                aria-selected={preset.id === value}
-                aria-disabled={locked}
-                onMouseEnter={() => setHoveredPresetId(preset.id)}
-                onClick={() => {
-                  if (locked) {
-                    onLockedPreset?.();
-                    return;
-                  }
-                  onChange(preset.id);
-                  setOpen(false);
-                }}
-                className="hero-style-dropdown-row"
-                data-active={preset.id === value}
-                style={locked ? { opacity: 0.62 } : undefined}
-              >
-                <div className="hero-style-dropdown-thumb" style={{ position: "relative" }}>
-                  <StylePreview preset={preset} />
-                  {locked ? (
-                    <span
-                      style={{
-                        position: "absolute",
-                        top: 6,
-                        right: 6,
-                        width: 22,
-                        height: 22,
-                        borderRadius: 6,
-                        background: "rgba(15,23,42,.55)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        color: "#fff",
-                      }}
-                      aria-hidden
-                    >
-                      <Icon name="lock" size={12} stroke={2} />
-                    </span>
-                  ) : null}
-                </div>
-                <span className="hero-style-dropdown-row-label">{preset.name}</span>
-              </button>
-            );})}
-          </div>
-          <div className="hero-style-dropdown-hint">
-            <p className="hero-style-dropdown-hint-title">{dropdownHintPreset.name}</p>
-            <p className="hero-style-dropdown-hint-text">{dropdownHintPreset.description}</p>
-            <span className="hero-style-dropdown-hint-note">{dropdownHintPreset.note}</span>
-          </div>
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -730,6 +594,83 @@ function PresentationStylePicker({ value, onChange }) {
               >
                 <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>{s.name}</span>
                 <span style={{ fontSize: 11, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }}>{s.note}</span>
+              </button>
+            ))}
+          </div>
+          <div className="hero-style-dropdown-hint">
+            <p className="hero-style-dropdown-hint-title">{hint.name}</p>
+            <p className="hero-style-dropdown-hint-text">{hint.description}</p>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Выбор визуального дизайна дека (типографика, сетка, компоненты). */
+export function DesignPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(null);
+  const ref = useRef(null);
+  const selected = DESIGNS.find((d) => d.id === value) || DESIGNS[0];
+  const hint = DESIGNS.find((d) => d.id === hovered) || selected;
+
+  useEffect(() => {
+    function handleOutside(e) {
+      if (!ref.current?.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
+
+  useEffect(() => {
+    if (!open) setHovered(null);
+  }, [open]);
+
+  return (
+    <div ref={ref} className={`hero-action-picker${open ? " hero-action-picker--open" : ""}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((p) => !p)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`Дизайн: ${selected.name}`}
+        className="hero-action-picker-btn"
+        style={{ minWidth: 110 }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)", whiteSpace: "nowrap" }}>
+          {selected.name}
+        </span>
+        <Icon name="chevron-down" size={15} style={{ color: "var(--ink-3)", flexShrink: 0 }} />
+      </button>
+
+      {!open ? (
+        <div className="hero-style-desc" role="tooltip">
+          <p className="hero-style-desc-kicker">Дизайн</p>
+          <p className="hero-style-desc-title">{selected.name}</p>
+          <p className="hero-style-desc-text">{selected.description}</p>
+          <span className="hero-style-desc-note">{selected.note}</span>
+        </div>
+      ) : null}
+
+      {open ? (
+        <div className="hero-style-dropdown" role="listbox" aria-label="Выбор дизайна"
+          style={{ minWidth: 260 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "6px 6px 4px" }}>
+            {DESIGNS.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                role="option"
+                aria-selected={d.id === value}
+                onMouseEnter={() => setHovered(d.id)}
+                onClick={() => { onChange(d.id); setOpen(false); }}
+                className="hero-style-dropdown-row"
+                data-active={d.id === value}
+                style={{ padding: "8px 10px", borderRadius: "var(--r-sm)", display: "flex", flexDirection: "column", gap: 2, alignItems: "flex-start", textAlign: "left" }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>{d.name}</span>
+                <span style={{ fontSize: 11, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }}>{d.note}</span>
               </button>
             ))}
           </div>

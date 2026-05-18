@@ -344,6 +344,32 @@ export const PRESENTATION_STYLES = [
   },
 ];
 
+/** Визуальные дизайны дека. Дизайн задаёт типографику, сетку и компоненты;
+ *  палитра приходит отдельно из выбранной темы. Должно совпадать с DESIGNS
+ *  в apps/generation/prompts_ru.py. */
+export const DESIGNS = [
+  {
+    id: "structured",
+    name: "Структурный",
+    description: "Модульная сетка и аккуратные карточки с рамками. Чёткая «дашбордная» подача.",
+    note: "карточки и сетка",
+  },
+  {
+    id: "minimal",
+    name: "Минимал",
+    description: "Много воздуха, тонкая типографика, линии вместо карточек. Спокойно и ясно.",
+    note: "воздух и типографика",
+  },
+  {
+    id: "editorial",
+    name: "Editorial",
+    description: "Журнальная подача: крупные контрастные заголовки, асимметрия, текст как герой.",
+    note: "крупная типографика",
+  },
+];
+
+export const DEFAULT_DESIGN_ID = "structured";
+
 export function isDarkStyleId(id) {
   return id === "dark";
 }

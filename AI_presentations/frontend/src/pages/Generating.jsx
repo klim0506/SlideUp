@@ -84,8 +84,8 @@ export default function Generating() {
         const fd = new FormData();
         fd.append("prompt", cfg.prompt || "");
         fd.append("slides_count", String(slidesCount));
-        fd.append("theme", cfg.theme || "light");
         fd.append("style", cfg.style || "pitch");
+        fd.append("design", cfg.design || "structured");
         fd.append("source_file", file);
         response = await apiJson("/api/generate/", { method: "POST", body: fd });
       } else {
@@ -94,8 +94,8 @@ export default function Generating() {
           body: JSON.stringify({
             prompt: cfg.prompt,
             slides_count: slidesCount,
-            theme: cfg.theme || "light",
             style: cfg.style || "pitch",
+            design: cfg.design || "structured",
           }),
         });
       }

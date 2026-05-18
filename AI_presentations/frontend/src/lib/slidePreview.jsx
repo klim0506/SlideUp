@@ -1,5 +1,7 @@
 /** Helpers + miniature canvas for deck slides (shared by PresentationView and SlideThumb). */
 
+import { useLayoutEffect, useRef, useState } from "react";
+
 import {
   getSafeSlideHtml,
   getSlideChart,
@@ -66,29 +68,65 @@ const PAGE_NUMBER_MODE_CORNER_TR = "corner_tr";
 const WATERMARK_MODE_CORNER_BR = "corner_br";
 const WATERMARK_MODE_CORNER_TR = "corner_tr";
 
-const THUMB_HTML_BASE_CSS = `
-  .slide-thumb-html { width:100%; height:100%; padding:6.5%; box-sizing:border-box; display:flex; flex-direction:column; gap:1.6%; overflow:hidden; }
-  .slide-thumb-html .slide-title { font-family: var(--font-display, inherit); font-size: 5.5%; line-height:1.04; letter-spacing:-0.03em; margin:0; }
-  .slide-thumb-html .slide-subtitle { font-size: 2.4%; line-height:1.3; margin:0; opacity:0.85; }
-  .slide-thumb-html .slide-bullets { list-style:none; margin:1.6% 0 0; padding:0; display:grid; gap:1.4%; }
-  .slide-thumb-html .slide-bullets li { display:grid; grid-template-columns: 4.4% 1fr; gap:1.6%; align-items:baseline; font-size:2.0%; line-height:1.36; }
-  .slide-thumb-html .slide-bullet-marker { font-family: var(--font-mono, monospace); font-size:0.62em; font-weight:700; }
-  .slide-thumb-html .slide-stats { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:1fr 1fr; gap:5%; }
-  .slide-thumb-html .slide-stat { border-top: 0.4% solid currentColor; padding-top:1.2%; opacity:1; display:grid; gap:0.6%; }
-  .slide-thumb-html .slide-stat-value { font-family: var(--font-display, inherit); font-size: 4.6%; font-weight:750; letter-spacing:-0.04em; line-height:1; }
-  .slide-thumb-html .slide-stat-label { font-size:1.6%; line-height:1.3; opacity:0.72; }
-  .slide-thumb-html .slide-columns { display:grid; grid-template-columns:1fr 1fr; gap:5%; }
-  .slide-thumb-html .slide-column ul { margin:0; padding-left:4%; font-size:1.7%; line-height:1.3; }
-  .slide-thumb-html .slide-column li { margin-bottom:0.7%; }
-  .slide-thumb-html .slide-quote { font-size:3.4%; line-height:1.18; font-style:italic; padding-left:2.6%; border-left:0.4% solid currentColor; margin:auto 0; }
-  .slide-thumb-html .slide-quote cite { display:block; margin-top:1.2%; font-style:normal; font-size:1.6%; opacity:0.78; }
-  .slide-thumb-html .slide-image { margin:0; max-height:60%; }
-  .slide-thumb-html .slide-image img { max-width:100%; max-height:100%; object-fit:contain; display:block; }
-  .slide-thumb-html .slide-chart-bars { list-style:none; padding:0; margin:0; display:flex; align-items:flex-end; gap:1%; height:36%; }
-  .slide-thumb-html .slide-chart-bars li { flex:1; display:grid; gap:0.4%; }
-  .slide-thumb-html .slide-chart-label { font-size:1.4%; opacity:0.7; }
-  .slide-thumb-html .slide-chart-value { font-size:1.6%; font-weight:600; }
-`;
+/** Design size of the generated slide HTML canvas (must match the viewer's SlideCanvas). */
+const SLIDE_HTML_DESIGN_WIDTH = 1200;
+const SLIDE_HTML_DESIGN_HEIGHT = 675;
+
+/**
+ * Render generated slide HTML exactly like the main viewer: at its native
+ * 1200×675 design size, then uniformly scaled down to fit the miniature.
+ * This keeps the thumbnail a pixel-faithful shrink of the real slide.
+ */
+function ScaledHtmlMiniature({ html, preset }) {
+  const outerRef = useRef(null);
+  const [scale, setScale] = useState(null);
+
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    if (!outer) return undefined;
+    const recalc = () => {
+      const cw = outer.clientWidth;
+      const ch = outer.clientHeight;
+      if (cw <= 0 || ch <= 0) return;
+      setScale(Math.min(cw / SLIDE_HTML_DESIGN_WIDTH, ch / SLIDE_HTML_DESIGN_HEIGHT));
+    };
+    recalc();
+    const ro = new ResizeObserver(recalc);
+    ro.observe(outer);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={outerRef}
+      style={{
+        position: "absolute",
+        inset: 0,
+        overflow: "hidden",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div
+        className="slide-html-canvas"
+        style={{
+          width: SLIDE_HTML_DESIGN_WIDTH,
+          height: SLIDE_HTML_DESIGN_HEIGHT,
+          flexShrink: 0,
+          transform: scale != null ? `scale(${scale})` : undefined,
+          transformOrigin: "center center",
+          visibility: scale != null ? "visible" : "hidden",
+          color: preset.ink,
+          "--accent": preset.accent,
+          fontSize: 16,
+          overflow: "hidden",
+        }}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </div>
+  );
+}
 
 /** 16:9 miniature matching the main viewer canvas. */
 export function DeckSlideThumbCanvas({
@@ -158,14 +196,7 @@ export function DeckSlideThumbCanvas({
         }}
       >
         {safeHtml ? (
-          <>
-            <style>{THUMB_HTML_BASE_CSS}</style>
-            <div
-              className="slide-thumb-html"
-              style={{ "--accent": preset.accent, color: preset.ink }}
-              dangerouslySetInnerHTML={{ __html: safeHtml }}
-            />
-          </>
+          <ScaledHtmlMiniature html={safeHtml} preset={preset} />
         ) : (
           <LegacyMiniature
             slide={slide}
