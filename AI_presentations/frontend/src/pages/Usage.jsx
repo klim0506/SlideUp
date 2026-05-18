@@ -275,7 +275,7 @@ export default function Usage() {
       </main>
 
       <SiteFooter />
-      <AuthModal open={authOpen} onClose={() => { setAuthOpen(false); navigate("/"); }} onSuccess={loadUsage} />
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSuccess={loadUsage} />
     </div>
   );
 }

@@ -63,11 +63,6 @@ export function getSlideStats(slide) {
   return [];
 }
 
-const PAGE_NUMBER_MODE_CORNER_BR = "corner_br";
-const PAGE_NUMBER_MODE_CORNER_TR = "corner_tr";
-const WATERMARK_MODE_CORNER_BR = "corner_br";
-const WATERMARK_MODE_CORNER_TR = "corner_tr";
-
 /** Design size of the generated slide HTML canvas (must match the viewer's SlideCanvas). */
 const SLIDE_HTML_DESIGN_WIDTH = 1200;
 const SLIDE_HTML_DESIGN_HEIGHT = 675;
@@ -132,11 +127,8 @@ function ScaledHtmlMiniature({ html, preset }) {
 export function DeckSlideThumbCanvas({
   slide,
   index,
-  total,
   preset,
   fontScale = 1,
-  pageNumberMode = PAGE_NUMBER_MODE_CORNER_BR,
-  watermarkMode = WATERMARK_MODE_CORNER_TR,
   slideWidth = 1200,
   slideHeight = null,
   cornerRadius = 8,
@@ -147,25 +139,12 @@ export function DeckSlideThumbCanvas({
   const W = typeof slideWidth === "number" && Number.isFinite(slideWidth) && slideWidth > 0 ? slideWidth : 1200;
   const H = typeof slideHeight === "number" && Number.isFinite(slideHeight) && slideHeight > 0 ? slideHeight : Math.round((W * 9) / 16);
 
-  const showCornerTR = pageNumberMode === PAGE_NUMBER_MODE_CORNER_TR;
-  const showCornerBR = pageNumberMode === PAGE_NUMBER_MODE_CORNER_BR;
-  const showWmTR = watermarkMode === WATERMARK_MODE_CORNER_TR;
-  const showWmBR = watermarkMode === WATERMARK_MODE_CORNER_BR;
-  const pageCounterText = `${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}`;
   const slidePadPct = 6.5;
-  const pageCounterCornerExtraPct = 4;
-  const pageCounterRightPct = slidePadPct + pageCounterCornerExtraPct;
 
   const sp = (vwVal, min, max) => {
     const raw = (vwVal / 100) * W * fs;
     return `${Math.round(Math.max(min, raw))}px`;
   };
-  const chromeLabelStyle = {
-    fontFamily: "var(--font-mono)",
-    fontSize: sp(1.1, 10, 14),
-    whiteSpace: "nowrap",
-  };
-  const chromeGap = Math.max(8, Math.round(10 * (W / 1200) * fs));
 
   const safeHtml = isHtmlSlide(slide) ? getSafeSlideHtml(slide, { assets }) : "";
   const icon = typeof slide?.metadata?.icon === "string"
@@ -209,47 +188,19 @@ export function DeckSlideThumbCanvas({
             slidePadPct={slidePadPct}
           />
         )}
-        <div
-          style={{
-            position: "absolute",
-            top: `${slidePadPct}%`,
-            left: `${slidePadPct}%`,
-            display: "flex",
-            alignItems: "center",
-            gap: chromeGap,
-            pointerEvents: "none",
-          }}
-        >
-          <div style={{ fontSize: sp(3.2, 20, 40), lineHeight: 1, userSelect: "none" }}>{icon || null}</div>
-        </div>
-        <div
-          style={{
-            position: "absolute",
-            top: `${slidePadPct}%`,
-            right: `${pageCounterRightPct}%`,
-            display: "flex",
-            alignItems: "center",
-            gap: chromeGap,
-            pointerEvents: "none",
-          }}
-        >
-          {showWmTR ? <div style={{ ...chromeLabelStyle, color: preset.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>SlideUp</div> : null}
-          {showCornerTR ? <div style={{ ...chromeLabelStyle, opacity: 0.48 }}>{pageCounterText}</div> : null}
-        </div>
-        {(showCornerBR || showWmBR) ? (
+        {icon ? (
           <div
             style={{
               position: "absolute",
-              right: `${pageCounterRightPct}%`,
-              bottom: `${slidePadPct}%`,
-              display: "flex",
-              alignItems: "center",
-              gap: chromeGap,
+              top: `${slidePadPct}%`,
+              left: `${slidePadPct}%`,
+              fontSize: sp(3.2, 20, 40),
+              lineHeight: 1,
+              userSelect: "none",
               pointerEvents: "none",
             }}
           >
-            {showWmBR ? <div style={{ ...chromeLabelStyle, color: preset.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>SlideUp</div> : null}
-            {showCornerBR ? <div style={{ ...chromeLabelStyle, opacity: 0.48 }}>{pageCounterText}</div> : null}
+            {icon}
           </div>
         ) : null}
       </div>

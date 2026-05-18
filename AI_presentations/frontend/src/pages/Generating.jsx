@@ -37,13 +37,16 @@ export default function Generating() {
   useEffect(() => {
     const raw = sessionStorage.getItem("genConfig");
     if (!raw) {
-      navigate("/");
+      // Полная перезагрузка, а не SPA-navigate: этот эффект выполняется до того,
+      // как App успевает повесить слушатель popstate, и SPA-переход терялся бы —
+      // экран генерации завис бы навсегда.
+      window.location.replace("/");
       return;
     }
     try {
       setConfig(JSON.parse(raw));
     } catch {
-      navigate("/");
+      window.location.replace("/");
       return;
     }
     const handoff = takePendingSource();

@@ -260,7 +260,7 @@ export default function Dashboard() {
 
       <AuthModal
         open={authOpen}
-        onClose={() => { setAuthOpen(false); navigate("/"); }}
+        onClose={() => setAuthOpen(false)}
         onSuccess={() => {
           getMe().then(setUser).catch(() => null);
           loadPresentations();
