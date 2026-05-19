@@ -24,8 +24,10 @@ from .claude import ClaudePresentationClient
 from .claude_client import call_claude, get_claude_mode
 from .models import GenerationJob
 from .postprocessing import postprocess, postprocess_single_slide
-from .prompts import (
+from .prompts_ru import (
     DECK_ASSIST_SYSTEM_PROMPT,
+    DEFAULT_DESIGN,
+    KNOWN_DESIGNS,
     KNOWN_STYLES,
     NEW_SLIDE_SYSTEM_PROMPT,
     SINGLE_SLIDE_SYSTEM_PROMPT,
@@ -199,6 +201,8 @@ class GeneratePresentationView(APIView):
         )
         raw_style = (request.data.get("style") or "pitch").strip()
         style = raw_style if raw_style in KNOWN_STYLES else "pitch"
+        raw_design = (request.data.get("design") or "").strip()
+        design = raw_design if raw_design in KNOWN_DESIGNS else DEFAULT_DESIGN
         slides_count = _parse_slides_count(request.data.get("slides_count", 8))
         session_key = _ensure_session_key(request)
         target_presentation_id = (request.data.get("presentation_id") or "").strip() or None
@@ -268,6 +272,7 @@ class GeneratePresentationView(APIView):
                     context=context_extra,
                     has_image=bool(image_sources),
                     style=style,
+                    design=design,
                 ),
                 lambda raw: postprocess(raw, expected_slides_count=slides_count),
                 image_sources=image_sources,
@@ -313,6 +318,7 @@ class GeneratePresentationView(APIView):
         if existing_target is not None:
             existing_target.title = data["title"]
             existing_target.style = style
+            existing_target.design = design
             existing_target.theme = theme
             existing_target.presentation_format = PRESENTATION_FORMAT_HTML_V1
             existing_target.slides = deck_slides
@@ -322,6 +328,7 @@ class GeneratePresentationView(APIView):
             existing_target.save(update_fields=(
                 "title",
                 "style",
+                "design",
                 "theme",
                 "presentation_format",
                 "slides",
@@ -336,6 +343,7 @@ class GeneratePresentationView(APIView):
                 session_key=session_key,
                 title=data["title"],
                 style=style,
+                design=design,
                 theme=theme,
                 presentation_format=PRESENTATION_FORMAT_HTML_V1,
                 slides=deck_slides,
@@ -383,6 +391,7 @@ class GeneratePresentationView(APIView):
             "slides": presentation.slides,
             "theme": presentation.theme,
             "style": presentation.style,
+            "design": presentation.design,
             "slides_unlocked": presentation.slides_unlocked,
         }
         return Response(body, status=status.HTTP_201_CREATED)

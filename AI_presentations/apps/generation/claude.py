@@ -1,5 +1,5 @@
 from .claude_client import call_claude
-from .prompts import SYSTEM_PROMPT
+from .prompts_ru import SYSTEM_PROMPT
 
 
 class ClaudePresentationClient:

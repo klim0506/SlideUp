@@ -1,6 +1,7 @@
 /** Helpers + miniature canvas for deck slides (shared by PresentationView and SlideThumb). */
 
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+
 import {
   getSafeSlideHtml,
   getSlideChart,
@@ -62,44 +63,72 @@ export function getSlideStats(slide) {
   return [];
 }
 
-const PAGE_NUMBER_MODE_CORNER_BR = "corner_br";
-const PAGE_NUMBER_MODE_CORNER_TR = "corner_tr";
-const WATERMARK_MODE_CORNER_BR = "corner_br";
-const WATERMARK_MODE_CORNER_TR = "corner_tr";
+/** Design size of the generated slide HTML canvas (must match the viewer's SlideCanvas). */
+const SLIDE_HTML_DESIGN_WIDTH = 1200;
+const SLIDE_HTML_DESIGN_HEIGHT = 675;
 
-const THUMB_HTML_BASE_CSS = `
-  .slide-thumb-html { width:100%; height:100%; padding:6.5%; box-sizing:border-box; display:flex; flex-direction:column; gap:1.6%; overflow:hidden; }
-  .slide-thumb-html .slide-title { font-family: var(--font-display, inherit); font-size: 5.5%; line-height:1.04; letter-spacing:-0.03em; margin:0; }
-  .slide-thumb-html .slide-subtitle { font-size: 2.4%; line-height:1.3; margin:0; opacity:0.85; }
-  .slide-thumb-html .slide-bullets { list-style:none; margin:1.6% 0 0; padding:0; display:grid; gap:1.4%; }
-  .slide-thumb-html .slide-bullets li { display:grid; grid-template-columns: 4.4% 1fr; gap:1.6%; align-items:baseline; font-size:2.0%; line-height:1.36; }
-  .slide-thumb-html .slide-bullet-marker { font-family: var(--font-mono, monospace); font-size:0.62em; font-weight:700; }
-  .slide-thumb-html .slide-stats { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:1fr 1fr; gap:5%; }
-  .slide-thumb-html .slide-stat { border-top: 0.4% solid currentColor; padding-top:1.2%; opacity:1; display:grid; gap:0.6%; }
-  .slide-thumb-html .slide-stat-value { font-family: var(--font-display, inherit); font-size: 4.6%; font-weight:750; letter-spacing:-0.04em; line-height:1; }
-  .slide-thumb-html .slide-stat-label { font-size:1.6%; line-height:1.3; opacity:0.72; }
-  .slide-thumb-html .slide-columns { display:grid; grid-template-columns:1fr 1fr; gap:5%; }
-  .slide-thumb-html .slide-column ul { margin:0; padding-left:4%; font-size:1.7%; line-height:1.3; }
-  .slide-thumb-html .slide-column li { margin-bottom:0.7%; }
-  .slide-thumb-html .slide-quote { font-size:3.4%; line-height:1.18; font-style:italic; padding-left:2.6%; border-left:0.4% solid currentColor; margin:auto 0; }
-  .slide-thumb-html .slide-quote cite { display:block; margin-top:1.2%; font-style:normal; font-size:1.6%; opacity:0.78; }
-  .slide-thumb-html .slide-image { margin:0; max-height:60%; }
-  .slide-thumb-html .slide-image img { max-width:100%; max-height:100%; object-fit:contain; display:block; }
-  .slide-thumb-html .slide-chart-bars { list-style:none; padding:0; margin:0; display:flex; align-items:flex-end; gap:1%; height:36%; }
-  .slide-thumb-html .slide-chart-bars li { flex:1; display:grid; gap:0.4%; }
-  .slide-thumb-html .slide-chart-label { font-size:1.4%; opacity:0.7; }
-  .slide-thumb-html .slide-chart-value { font-size:1.6%; font-weight:600; }
-`;
+/**
+ * Render generated slide HTML exactly like the main viewer: at its native
+ * 1200×675 design size, then uniformly scaled down to fit the miniature.
+ * This keeps the thumbnail a pixel-faithful shrink of the real slide.
+ */
+function ScaledHtmlMiniature({ html, preset }) {
+  const outerRef = useRef(null);
+  const [scale, setScale] = useState(null);
+
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    if (!outer) return undefined;
+    const recalc = () => {
+      const cw = outer.clientWidth;
+      const ch = outer.clientHeight;
+      if (cw <= 0 || ch <= 0) return;
+      setScale(Math.min(cw / SLIDE_HTML_DESIGN_WIDTH, ch / SLIDE_HTML_DESIGN_HEIGHT));
+    };
+    recalc();
+    const ro = new ResizeObserver(recalc);
+    ro.observe(outer);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={outerRef}
+      style={{
+        position: "absolute",
+        inset: 0,
+        overflow: "hidden",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div
+        className="slide-html-canvas"
+        style={{
+          width: SLIDE_HTML_DESIGN_WIDTH,
+          height: SLIDE_HTML_DESIGN_HEIGHT,
+          flexShrink: 0,
+          transform: scale != null ? `scale(${scale})` : undefined,
+          transformOrigin: "center center",
+          visibility: scale != null ? "visible" : "hidden",
+          color: preset.ink,
+          "--accent": preset.accent,
+          fontSize: 16,
+          overflow: "hidden",
+        }}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </div>
+  );
+}
 
 /** 16:9 miniature matching the main viewer canvas. */
 export function DeckSlideThumbCanvas({
   slide,
   index,
-  total,
   preset,
   fontScale = 1,
-  pageNumberMode = PAGE_NUMBER_MODE_CORNER_BR,
-  watermarkMode = WATERMARK_MODE_CORNER_TR,
   slideWidth = 1200,
   slideHeight = null,
   cornerRadius = 8,
@@ -110,49 +139,20 @@ export function DeckSlideThumbCanvas({
   const W = typeof slideWidth === "number" && Number.isFinite(slideWidth) && slideWidth > 0 ? slideWidth : 1200;
   const H = typeof slideHeight === "number" && Number.isFinite(slideHeight) && slideHeight > 0 ? slideHeight : Math.round((W * 9) / 16);
 
-  const showCornerTR = pageNumberMode === PAGE_NUMBER_MODE_CORNER_TR;
-  const showCornerBR = pageNumberMode === PAGE_NUMBER_MODE_CORNER_BR;
-  const showWmTR = watermarkMode === WATERMARK_MODE_CORNER_TR;
-  const showWmBR = watermarkMode === WATERMARK_MODE_CORNER_BR;
-  const pageCounterText = `${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}`;
   const slidePadPct = 6.5;
-  const pageCounterCornerExtraPct = 4;
-  const pageCounterRightPct = slidePadPct + pageCounterCornerExtraPct;
 
   const sp = (vwVal, min, max) => {
     const raw = (vwVal / 100) * W * fs;
     return `${Math.round(Math.max(min, raw))}px`;
   };
-  const chromeLabelStyle = {
-    fontFamily: "var(--font-mono)",
-    fontSize: sp(1.1, 10, 14),
-    whiteSpace: "nowrap",
-  };
-  const chromeGap = Math.max(8, Math.round(10 * (W / 1200) * fs));
 
   const safeHtml = isHtmlSlide(slide) ? getSafeSlideHtml(slide, { assets }) : "";
   const icon = typeof slide?.metadata?.icon === "string"
     ? slide.metadata.icon.trim()
     : (typeof slide?.icon === "string" ? slide.icon.trim() : "");
 
-  const outerRef = useRef(null);
-  const [htmlScale, setHtmlScale] = useState(null);
-
-  useEffect(() => {
-    if (!safeHtml) return;
-    const el = outerRef.current;
-    if (!el) return;
-    const obs = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect?.width;
-      if (w > 0 && W > 0) setHtmlScale(w / W);
-    });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [safeHtml, W]);
-
   return (
     <div
-      ref={outerRef}
       style={{
         aspectRatio: "16 / 9",
         width: "100%",
@@ -175,20 +175,7 @@ export function DeckSlideThumbCanvas({
         }}
       >
         {safeHtml ? (
-          <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
-            <div
-              style={{
-                width: W,
-                height: H,
-                transformOrigin: "top left",
-                transform: htmlScale !== null ? `scale(${htmlScale})` : "none",
-                visibility: htmlScale !== null ? "visible" : "hidden",
-                "--accent": preset.accent,
-                color: preset.ink,
-              }}
-              dangerouslySetInnerHTML={{ __html: safeHtml }}
-            />
-          </div>
+          <ScaledHtmlMiniature html={safeHtml} preset={preset} />
         ) : (
           <LegacyMiniature
             slide={slide}
@@ -201,47 +188,19 @@ export function DeckSlideThumbCanvas({
             slidePadPct={slidePadPct}
           />
         )}
-        <div
-          style={{
-            position: "absolute",
-            top: `${slidePadPct}%`,
-            left: `${slidePadPct}%`,
-            display: "flex",
-            alignItems: "center",
-            gap: chromeGap,
-            pointerEvents: "none",
-          }}
-        >
-          <div style={{ fontSize: sp(3.2, 20, 40), lineHeight: 1, userSelect: "none" }}>{icon || null}</div>
-        </div>
-        <div
-          style={{
-            position: "absolute",
-            top: `${slidePadPct}%`,
-            right: `${pageCounterRightPct}%`,
-            display: "flex",
-            alignItems: "center",
-            gap: chromeGap,
-            pointerEvents: "none",
-          }}
-        >
-          {showWmTR ? <div style={{ ...chromeLabelStyle, color: preset.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>SlideUp</div> : null}
-          {showCornerTR ? <div style={{ ...chromeLabelStyle, opacity: 0.48 }}>{pageCounterText}</div> : null}
-        </div>
-        {(showCornerBR || showWmBR) ? (
+        {icon ? (
           <div
             style={{
               position: "absolute",
-              right: `${pageCounterRightPct}%`,
-              bottom: `${slidePadPct}%`,
-              display: "flex",
-              alignItems: "center",
-              gap: chromeGap,
+              top: `${slidePadPct}%`,
+              left: `${slidePadPct}%`,
+              fontSize: sp(3.2, 20, 40),
+              lineHeight: 1,
+              userSelect: "none",
               pointerEvents: "none",
             }}
           >
-            {showWmBR ? <div style={{ ...chromeLabelStyle, color: preset.accent, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>SlideUp</div> : null}
-            {showCornerBR ? <div style={{ ...chromeLabelStyle, opacity: 0.48 }}>{pageCounterText}</div> : null}
+            {icon}
           </div>
         ) : null}
       </div>

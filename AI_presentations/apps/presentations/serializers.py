@@ -99,6 +99,7 @@ class PresentationSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "style",
+            "design",
             "theme",
             "theme_custom",
             "presentation_format",
@@ -116,6 +117,7 @@ class PresentationSerializer(serializers.ModelSerializer):
             "slide_count",
             "assets",
             "style",
+            "design",
             "slides_unlocked",
             "presentation_format",
         )

@@ -16,6 +16,11 @@ class Presentation(models.Model):
     session_key = models.CharField(max_length=128, blank=True)
     title = models.CharField(max_length=255)
     style = models.CharField(max_length=32, default="pitch")
+    design = models.CharField(
+        max_length=32,
+        default="structured",
+        help_text="Визуальный дизайн дека: minimal, structured или editorial.",
+    )
     theme = models.CharField(max_length=32, default="light")
     theme_custom = models.JSONField(null=True, blank=True)
     presentation_format = models.CharField(

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, SlideThumb, accentForTheme } from "@/lib/design";
-import { apiJson, createBlankPresentation, navigate } from "@/lib/api";
-import { LEGACY_GEN_CONFIG_KEY, genConfigKey, setPendingSource, takePendingSource } from "@/lib/genHandoff";
+import { apiJson, navigate } from "@/lib/api";
+import { takePendingSource } from "@/lib/genHandoff";
 
 const PHASES = [
   { id: "outline", label: "Структура" },
@@ -22,7 +22,7 @@ const TICKER_LINES = [
 
 const FILE_TICKER_PREFIX = "Читаем ваш файл и достаём суть";
 
-export function PresentationGeneratingState({ presentationId = null, initialConfig = null, onGenerated = null, onCancel = null, onUpgrade = null }) {
+export default function Generating() {
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [thumbs, setThumbs] = useState([]);
   const [error, setError] = useState("");
@@ -35,18 +35,24 @@ export function PresentationGeneratingState({ presentationId = null, initialConf
   const startedAtRef = useRef(Date.now());
 
   useEffect(() => {
-    setConfig(initialConfig || null);
-    setError("");
-    setDone(false);
-    setThumbs([]);
-    setPhaseIndex(0);
-    setTickerIndex(0);
-    calledRef.current = false;
-    startedAtRef.current = Date.now();
-    const handoff = takePendingSource(presentationId);
+    const raw = sessionStorage.getItem("genConfig");
+    if (!raw) {
+      // Полная перезагрузка, а не SPA-navigate: этот эффект выполняется до того,
+      // как App успевает повесить слушатель popstate, и SPA-переход терялся бы —
+      // экран генерации завис бы навсегда.
+      window.location.replace("/");
+      return;
+    }
+    try {
+      setConfig(JSON.parse(raw));
+    } catch {
+      window.location.replace("/");
+      return;
+    }
+    const handoff = takePendingSource();
     setSourceFile(handoff.file);
     setSourceMeta(handoff.meta);
-  }, [initialConfig, presentationId]);
+  }, []);
 
   useEffect(() => {
     if (!config || calledRef.current) return;
@@ -76,18 +82,13 @@ export function PresentationGeneratingState({ presentationId = null, initialConf
   async function runGeneration(cfg, file) {
     try {
       const slidesCount = cfg.slides_count || cfg.slideCount || 5;
-      const targetId = cfg.presentation_id || presentationId;
-      if (!file && cfg.source_file_name) {
-        throw new Error("После обновления страницы файл уже недоступен. Вернитесь назад и прикрепите его ещё раз.");
-      }
       let response;
       if (file) {
         const fd = new FormData();
         fd.append("prompt", cfg.prompt || "");
         fd.append("slides_count", String(slidesCount));
-        fd.append("theme", cfg.theme || "light");
         fd.append("style", cfg.style || "pitch");
-        if (targetId) fd.append("presentation_id", String(targetId));
+        fd.append("design", cfg.design || "structured");
         fd.append("source_file", file);
         response = await apiJson("/api/generate/", { method: "POST", body: fd });
       } else {
@@ -96,9 +97,8 @@ export function PresentationGeneratingState({ presentationId = null, initialConf
           body: JSON.stringify({
             prompt: cfg.prompt,
             slides_count: slidesCount,
-            theme: cfg.theme || "light",
             style: cfg.style || "pitch",
-            presentation_id: targetId,
+            design: cfg.design || "structured",
           }),
         });
       }
@@ -116,29 +116,11 @@ export function PresentationGeneratingState({ presentationId = null, initialConf
         await delay(minVisible - elapsed);
       }
 
-      if (targetId) sessionStorage.removeItem(genConfigKey(targetId));
-      sessionStorage.removeItem(LEGACY_GEN_CONFIG_KEY);
-      if (onGenerated) {
-        onGenerated(response);
-      } else {
-        navigate(`/presentation/${response.id}`);
-      }
+      sessionStorage.removeItem("genConfig");
+      navigate(`/presentation/${response.id}`);
     } catch (err) {
-      if (err?.status === 429 || err?.data?.show_upsell) onUpgrade?.(err);
       setError(err.message || "Пока не получилось создать презентацию — загляните чуть позже или попробуйте снова.");
     }
-  }
-
-  function retryGeneration() {
-    if (!config) return;
-    setError("");
-    setDone(false);
-    setThumbs([]);
-    setPhaseIndex(0);
-    setTickerIndex(0);
-    startedAtRef.current = Date.now();
-    calledRef.current = true;
-    void runGeneration(config, sourceFile);
   }
 
   if (error) {
@@ -154,14 +136,9 @@ export function PresentationGeneratingState({ presentationId = null, initialConf
           </div>
           <h2 style={{ fontSize: 26, fontWeight: 760, letterSpacing: "-0.03em", marginBottom: 12 }}>Пока не получилось</h2>
           <p style={{ color: "var(--ink-2)", fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>{error}</p>
-          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-            <button onClick={retryGeneration} className="su-btn su-btn-primary" style={{ padding: "12px 24px" }}>
-              Попробовать снова
-            </button>
-            <button onClick={() => (onCancel ? onCancel() : navigate("/"))} className="su-btn su-btn-outline" style={{ padding: "12px 24px" }}>
-              Назад
-            </button>
-          </div>
+          <button onClick={() => navigate("/")} className="su-btn su-btn-primary" style={{ padding: "12px 24px" }}>
+            Вернуться и попробовать снова
+          </button>
         </div>
       </div>
     );
@@ -246,79 +223,6 @@ export function PresentationGeneratingState({ presentationId = null, initialConf
           />
           {!done ? <div className="gen-magic-bar-shimmer" /> : null}
         </div>
-      </div>
-    </div>
-  );
-}
-
-export default function Generating() {
-  const [problem, setProblem] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function migrateLegacyGeneration() {
-      const raw = sessionStorage.getItem(LEGACY_GEN_CONFIG_KEY);
-      if (!raw) {
-        navigate("/");
-        return;
-      }
-
-      let cfg;
-      try {
-        cfg = JSON.parse(raw);
-      } catch {
-        sessionStorage.removeItem(LEGACY_GEN_CONFIG_KEY);
-        navigate("/");
-        return;
-      }
-
-      try {
-        const deck = await createBlankPresentation({ theme: cfg.theme || "light" });
-        if (cancelled) return;
-        sessionStorage.setItem(
-          genConfigKey(deck.id),
-          JSON.stringify({
-            ...cfg,
-            presentation_id: deck.id,
-          }),
-        );
-        const legacySource = takePendingSource();
-        setPendingSource(deck.id, legacySource.file, legacySource.meta);
-        sessionStorage.removeItem(LEGACY_GEN_CONFIG_KEY);
-        navigate(`/presentation/${deck.id}`);
-      } catch (err) {
-        if (!cancelled) {
-          setProblem(err?.message || "Не получилось подготовить генерацию. Попробуйте ещё раз.");
-        }
-      }
-    }
-
-    void migrateLegacyGeneration();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (problem) {
-    return (
-      <div className="su-page" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}>
-        <div style={{ textAlign: "center", maxWidth: 460 }}>
-          <p style={{ color: "var(--ink-2)", fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>{problem}</p>
-          <button onClick={() => navigate("/")} className="su-btn su-btn-primary" style={{ padding: "12px 24px" }}>
-            Назад
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="su-page" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}>
-      <div className="gen-magic-brand">
-        <span className="gen-magic-brand-aura" aria-hidden="true" />
-        <Icon name="logo" size={22} style={{ color: "var(--accent)", position: "relative", zIndex: 1 }} />
-        <span style={{ fontSize: 16, fontWeight: 750, letterSpacing: "-0.01em", position: "relative", zIndex: 1 }}>SlideUp</span>
       </div>
     </div>
   );

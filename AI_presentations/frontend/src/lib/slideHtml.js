@@ -36,52 +36,13 @@ const ALLOWED_TAGS = [
   "feColorMatrix", "feDropShadow", "feBlend", "feFlood", "feComposite",
 ];
 
-const ALLOWED_ATTR = [
-  // Common
-  "class", "id", "style", "title", "lang", "dir", "role", "tabindex",
-  "aria-label", "aria-labelledby", "aria-describedby", "aria-hidden",
-  "data-layout", "data-format", "data-role", "data-slot", "data-marker",
-  "data-icon", "data-image-ref", "data-asset", "data-variant", "data-tone",
-  "data-accent", "data-step", "data-index",
-  // Links / media
-  "href", "rel", "target", "download",
-  "src", "alt", "width", "height", "loading", "decoding", "srcset", "sizes",
-  // Tables / lists
-  "scope", "colspan", "rowspan", "start", "type", "reversed", "value",
-  "summary", "abbr", "headers",
-  // Quotes / time
-  "cite", "datetime", "open",
-  // Progress / meter
-  "min", "max", "low", "high", "optimum",
-  // SVG
-  "viewBox", "xmlns", "xmlns:xlink", "preserveAspectRatio",
-  "fill", "fill-opacity", "fill-rule",
-  "stroke", "stroke-width", "stroke-opacity",
-  "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset",
-  "stroke-miterlimit",
-  "opacity", "transform", "transform-origin",
-  "cx", "cy", "r", "rx", "ry", "x", "y", "x1", "y1", "x2", "y2",
-  "d", "points", "dx", "dy", "offset",
-  "stop-color", "stop-opacity",
-  "gradientUnits", "gradientTransform", "spreadMethod",
-  "patternUnits", "patternContentUnits", "patternTransform",
-  "maskUnits", "clipPathUnits",
-  "clip-path", "mask", "filter",
-  "text-anchor", "dominant-baseline", "alignment-baseline",
-  "font-family", "font-size", "font-weight", "font-style",
-  "letter-spacing", "text-decoration",
-  "vector-effect", "paint-order",
-  "stdDeviation", "in", "in2", "result", "values",
-  "xlink:href", "from", "to", "begin", "dur", "repeatCount",
-  "color", "marker-end", "marker-start", "marker-mid", "orient",
-];
-
-const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto|cid):|#|\/|data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,)/i;
-
+// Не задаём кастомные ALLOWED_ATTR/ALLOWED_URI_REGEXP: кастомный URI-regexp
+// заставлял DOMPurify проверять geometry-атрибуты SVG (x/y/width/viewBox/d) как
+// URL и вырезать их — SVG-графики рендерились пустыми. Дефолт DOMPurify
+// безопасен (блокирует javascript:, допускает cid:/data:image); строгий
+// whitelist схем и атрибутов уже обеспечивает серверный санитайзер.
 const PURIFY_CONFIG = {
   ALLOWED_TAGS,
-  ALLOWED_ATTR,
-  ALLOWED_URI_REGEXP,
   FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "link", "meta", "input"],
   FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur", "onchange", "onsubmit"],
   ADD_DATA_URI_TAGS: ["img"],
