@@ -1,13 +1,21 @@
 import json
 from datetime import timedelta
 
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.billing.models import UsageLog
-from apps.billing.utils import check_and_spend_slides, check_and_spend_slides_up_to, increment_usage
+from apps.billing.plan_limits_config import max_slides_per_presentation
+from apps.billing.utils import (
+    GUEST_MONTHLY_SLIDES,
+    check_slide_balance,
+    get_effective_plan,
+    increment_usage,
+    spend_slides,
+)
 from apps.presentations.models import Presentation
 from apps.presentations.slide_html import PRESENTATION_FORMAT_HTML_V1, SLIDE_SID_KEY, coerce_html_slide
 from apps.presentations.themes import sanitize_generation_theme
@@ -49,6 +57,27 @@ def _parse_slides_count(value) -> int:
         return max(int(value), 1)
     except (TypeError, ValueError):
         return 8
+
+
+def _max_slides_for_request(user) -> int | None:
+    if user and user.is_authenticated:
+        plan = get_effective_plan(user)
+        return max_slides_per_presentation(plan)
+    return GUEST_MONTHLY_SLIDES
+
+
+def _max_slides_response(max_slides, requested):
+    return Response(
+        {
+            "allowed": False,
+            "reason": "max_slides_per_presentation_exceeded",
+            "show_upsell": True,
+            "requested": requested,
+            "max_slides": max_slides,
+            "recommended_action": "reduce_slides_or_upgrade",
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
 
 
 def _retry_prompt(user_prompt, error, attempt) -> str:
@@ -206,21 +235,29 @@ class GeneratePresentationView(APIView):
             topic = f'Презентация по материалам файла «{uploaded.name}».'
 
         user = request.user if _is_authenticated(request) else None
-        usage_check = None
-        if user:
-            usage_check = check_and_spend_slides_up_to(
-                user,
-                action=UsageLog.Action.GENERATE,
-                slides_requested=slides_count,
+        max_slides = _max_slides_for_request(user)
+        if max_slides is not None and slides_count > max_slides:
+            _finish_job(
+                job,
+                status_value=GenerationJob.Status.REJECTED,
+                started_at=started_at,
+                error_message="Max slides per presentation exceeded.",
             )
-            if not usage_check["allowed"]:
-                _finish_job(
-                    job,
-                    status_value=GenerationJob.Status.REJECTED,
-                    started_at=started_at,
-                    error_message=usage_check.get("reason", "Slide usage rejected."),
-                )
-                return Response(usage_check, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return _max_slides_response(max_slides, slides_count)
+
+        usage_check = check_slide_balance(
+            user=user,
+            session_key=session_key if user is None else "",
+            slides_count=slides_count,
+        )
+        if not usage_check["allowed"]:
+            _finish_job(
+                job,
+                status_value=GenerationJob.Status.REJECTED,
+                started_at=started_at,
+                error_message=usage_check.get("reason", "Slide usage rejected."),
+            )
+            return Response(usage_check, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         try:
             data = _call_claude_with_json_retry(
@@ -253,17 +290,20 @@ class GeneratePresentationView(APIView):
 
         deck_slides = data["slides"]
         slides_unlocked = None
-        if user and usage_check:
-            spent = int(usage_check.get("spent") or 0)
-            if spent > 0 and spent < len(deck_slides):
-                slides_unlocked = spent
 
         existing_target = None
-        if target_presentation_id and user:
-            existing_target = Presentation.objects.filter(
-                pk=target_presentation_id,
-                user=user,
-            ).first()
+        if target_presentation_id:
+            if user:
+                existing_target = Presentation.objects.filter(
+                    pk=target_presentation_id,
+                    user=user,
+                ).first()
+            else:
+                existing_target = Presentation.objects.filter(
+                    pk=target_presentation_id,
+                    user__isnull=True,
+                    session_key=session_key,
+                ).first()
             if existing_target and (
                 isinstance(existing_target.slides, list) and len(existing_target.slides) > 0
             ):
@@ -304,12 +344,31 @@ class GeneratePresentationView(APIView):
             )
 
         if user:
+            usage_spend = spend_slides(user=user, slides_count=len(deck_slides))
+            if not usage_spend["allowed"]:
+                _finish_job(
+                    job,
+                    status_value=GenerationJob.Status.REJECTED,
+                    started_at=started_at,
+                    error_message=usage_spend.get("reason", "Slide usage rejected."),
+                )
+                return Response(usage_spend, status=status.HTTP_429_TOO_MANY_REQUESTS)
             increment_usage(
                 user,
                 action=UsageLog.Action.GENERATE,
-                slides_spent=int(usage_check["spent"]),
+                slides_spent=int(usage_spend["spent"]),
                 presentation=presentation,
             )
+        else:
+            usage_spend = spend_slides(session_key=session_key, slides_count=len(deck_slides))
+            if not usage_spend["allowed"]:
+                _finish_job(
+                    job,
+                    status_value=GenerationJob.Status.REJECTED,
+                    started_at=started_at,
+                    error_message=usage_spend.get("reason", "Guest slide usage rejected."),
+                )
+                return Response(usage_spend, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         _finish_job(
             job,
@@ -326,8 +385,6 @@ class GeneratePresentationView(APIView):
             "style": presentation.style,
             "slides_unlocked": presentation.slides_unlocked,
         }
-        if user and usage_check and usage_check.get("capped"):
-            body["slides_billing_capped"] = True
         return Response(body, status=status.HTTP_201_CREATED)
 
 
@@ -374,20 +431,19 @@ class RefineSlideView(APIView):
             )
 
         user = request.user if _is_authenticated(request) else None
-        if user:
-            usage_check = check_and_spend_slides(
-                user,
-                action=UsageLog.Action.REFINE,
-                slides_count=1,
+        usage_check = check_slide_balance(
+            user=user,
+            session_key=request.session.session_key if user is None else "",
+            slides_count=1,
+        )
+        if not usage_check["allowed"]:
+            _finish_job(
+                job,
+                status_value=GenerationJob.Status.REJECTED,
+                started_at=started_at,
+                error_message=usage_check.get("reason", "Refine usage rejected."),
             )
-            if not usage_check["allowed"]:
-                _finish_job(
-                    job,
-                    status_value=GenerationJob.Status.REJECTED,
-                    started_at=started_at,
-                    error_message=usage_check.get("reason", "Refine usage rejected."),
-                )
-                return Response(usage_check, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response(usage_check, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         slide_for_prompt = _slide_for_prompt(slide)
         user_prompt = (
@@ -416,6 +472,15 @@ class RefineSlideView(APIView):
             )
 
         if user:
+            usage_spend = spend_slides(user=user, slides_count=1)
+            if not usage_spend["allowed"]:
+                _finish_job(
+                    job,
+                    status_value=GenerationJob.Status.REJECTED,
+                    started_at=started_at,
+                    error_message=usage_spend.get("reason", "Refine usage rejected."),
+                )
+                return Response(usage_spend, status=status.HTTP_429_TOO_MANY_REQUESTS)
             presentation = None
             if presentation_id:
                 presentation = Presentation.objects.filter(
@@ -428,6 +493,16 @@ class RefineSlideView(APIView):
                 slides_spent=1,
                 presentation=presentation,
             )
+        else:
+            usage_spend = spend_slides(session_key=request.session.session_key, slides_count=1)
+            if not usage_spend["allowed"]:
+                _finish_job(
+                    job,
+                    status_value=GenerationJob.Status.REJECTED,
+                    started_at=started_at,
+                    error_message=usage_spend.get("reason", "Guest refine usage rejected."),
+                )
+                return Response(usage_spend, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         _finish_job(
             job,
@@ -492,24 +567,23 @@ class AssistDeckView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        user = request.user if _is_authenticated(request) else None
-        if user:
-            usage_check = check_and_spend_slides(
-                user,
-                action=UsageLog.Action.REFINE,
-                slides_count=1,
-            )
-            if not usage_check["allowed"]:
-                _finish_job(
-                    job,
-                    status_value=GenerationJob.Status.REJECTED,
-                    started_at=started_at,
-                    error_message=usage_check.get("reason", "Assist usage rejected."),
-                )
-                return Response(usage_check, status=status.HTTP_429_TOO_MANY_REQUESTS)
-
         prompt_slides = [_slide_for_prompt(s) for s in slides]
         slide_count = len(prompt_slides)
+        user = request.user if _is_authenticated(request) else None
+        assist_cost = 1 if mode == "append_slide" else slide_count
+        usage_check = check_slide_balance(
+            user=user,
+            session_key=request.session.session_key if user is None else "",
+            slides_count=assist_cost,
+        )
+        if not usage_check["allowed"]:
+            _finish_job(
+                job,
+                status_value=GenerationJob.Status.REJECTED,
+                started_at=started_at,
+                error_message=usage_check.get("reason", "Assist usage rejected."),
+            )
+            return Response(usage_check, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         if mode == "append_slide":
             user_prompt = (
@@ -540,6 +614,15 @@ class AssistDeckView(APIView):
                 )
 
             if user:
+                usage_spend = spend_slides(user=user, slides_count=1)
+                if not usage_spend["allowed"]:
+                    _finish_job(
+                        job,
+                        status_value=GenerationJob.Status.REJECTED,
+                        started_at=started_at,
+                        error_message=usage_spend.get("reason", "Assist usage rejected."),
+                    )
+                    return Response(usage_spend, status=status.HTTP_429_TOO_MANY_REQUESTS)
                 presentation = None
                 if presentation_id:
                     presentation = Presentation.objects.filter(
@@ -552,6 +635,16 @@ class AssistDeckView(APIView):
                     slides_spent=1,
                     presentation=presentation,
                 )
+            else:
+                usage_spend = spend_slides(session_key=request.session.session_key, slides_count=1)
+                if not usage_spend["allowed"]:
+                    _finish_job(
+                        job,
+                        status_value=GenerationJob.Status.REJECTED,
+                        started_at=started_at,
+                        error_message=usage_spend.get("reason", "Guest assist usage rejected."),
+                    )
+                    return Response(usage_spend, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
             _finish_job(
                 job,
@@ -604,6 +697,15 @@ class AssistDeckView(APIView):
             )
 
         if user:
+            usage_spend = spend_slides(user=user, slides_count=assist_cost)
+            if not usage_spend["allowed"]:
+                _finish_job(
+                    job,
+                    status_value=GenerationJob.Status.REJECTED,
+                    started_at=started_at,
+                    error_message=usage_spend.get("reason", "Assist usage rejected."),
+                )
+                return Response(usage_spend, status=status.HTTP_429_TOO_MANY_REQUESTS)
             presentation = None
             if presentation_id:
                 presentation = Presentation.objects.filter(
@@ -613,9 +715,19 @@ class AssistDeckView(APIView):
             increment_usage(
                 user,
                 action=UsageLog.Action.REFINE,
-                slides_spent=1,
+                slides_spent=assist_cost,
                 presentation=presentation,
             )
+        else:
+            usage_spend = spend_slides(session_key=request.session.session_key, slides_count=assist_cost)
+            if not usage_spend["allowed"]:
+                _finish_job(
+                    job,
+                    status_value=GenerationJob.Status.REJECTED,
+                    started_at=started_at,
+                    error_message=usage_spend.get("reason", "Guest assist usage rejected."),
+                )
+                return Response(usage_spend, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         _finish_job(
             job,

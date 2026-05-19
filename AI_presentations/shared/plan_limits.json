@@ -1,5 +1,11 @@
 {
   "plans": {
+    "guest": {
+      "monthly_slides": 7,
+      "pdf_exports_per_month": 0,
+      "base_style_presets": 2,
+      "max_slides_per_presentation": 7
+    },
     "free": {
       "monthly_slides": 30,
       "pdf_exports_per_month": 1,

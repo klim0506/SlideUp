@@ -1,5 +1,4 @@
 import calendar
-from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -104,7 +103,6 @@ def apply_slide_pack_payment(record):
     """Apply a successful YooKassa slide-pack payment to the user's slide balance."""
     pack_config = PACK_CONFIG[record.pack_id]
     now = timezone.now()
-    expires_at = now + timedelta(days=pack_config["days"])
 
     slide_credit, _ = SlideCredit.objects.get_or_create(user=record.user)
     SlideCredit.objects.filter(pk=slide_credit.pk).update(
@@ -114,7 +112,7 @@ def apply_slide_pack_payment(record):
         user=record.user,
         slides=pack_config["slides"],
         price_rub=int(Decimal(pack_config["amount"])),
-        expires_at=expires_at,
+        expires_at=None,
         paid_at=now,
     )
 

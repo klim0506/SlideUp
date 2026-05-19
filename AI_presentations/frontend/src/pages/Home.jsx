@@ -5,9 +5,9 @@ import SiteFooter from "@/components/SiteFooter";
 import SiteHeader from "@/components/SiteHeader";
 import { Icon, PITCH_SLIDES, PRESENTATION_STYLES, STYLE_PRESETS, StylePreview, canUnlockPreset } from "@/lib/design";
 import UpsellModal from "@/components/UpsellModal";
-import { freeLandingFeatureItems, studentLandingFeatureItems } from "@/lib/planLimits";
-import { setPendingSource } from "@/lib/genHandoff";
-import { getMe, logout, navigate } from "@/lib/api";
+import { freeLandingFeatureItems, planLimits, studentLandingFeatureItems } from "@/lib/planLimits";
+import { genConfigKey, setPendingSource } from "@/lib/genHandoff";
+import { createBlankPresentation, getMe, logout, navigate } from "@/lib/api";
 import { HERO_EXAMPLE_PROMPTS, useTypewriterPlaceholder } from "@/lib/useTypewriterPlaceholder";
 
 const HERO_AUDIENCES = ["дизайнеры", "предприниматели", "менеджеры", "студенты", "компании"];
@@ -16,9 +16,9 @@ const HERO_AUDIENCES = ["дизайнеры", "предприниматели", 
 export const HERO_SOURCE_ACCEPT =
   ".pdf,.doc,.docx,.txt,.ppt,.pptx,.jpg,.jpeg,.png,.webp,.gif,.bmp,.heic,.heif,.avif,image/*";
 
-const MAX_SLIDES_LOGGED_IN = 20;
+const MAX_SLIDES_LOGGED_IN = planLimits.pro.max_slides_per_presentation || 20;
 /** Без аккаунта можно выбрать до 7 слайдов; 8+ — после входа. */
-const MAX_SLIDES_GUEST = 7;
+const MAX_SLIDES_GUEST = planLimits.guest.max_slides_per_presentation;
 const HERO_DRAFT_STORAGE_KEY = "heroDraft";
 let heroDraftMemory = null;
 
@@ -40,6 +40,7 @@ export default function Home({ workspaceMode = false }) {
   const [createErr, setCreateErr] = useState("");
   const fileInputRef = useRef(null);
   const [upsellOpen, setUpsellOpen] = useState(false);
+  const [upsellReason, setUpsellReason] = useState("general");
   const draftHydratedRef = useRef(false);
 
   const prevUserRef = useRef(user);
@@ -115,7 +116,7 @@ export default function Home({ workspaceMode = false }) {
     }
   }, [user?.plan, styleId]);
 
-  function handleCreate(options = {}) {
+  async function handleCreate(options = {}) {
     setCreateErr("");
     if (!isHeroPromptValid(prompt)) {
       setCreateErr("Расскажите тему чуть подробнее — от 4 символов без лишних пробелов по краям.");
@@ -125,19 +126,25 @@ export default function Home({ workspaceMode = false }) {
     const trimmed = prompt.trim();
     const requestedSlideCount = options.slideCount ?? slideCount;
 
-    sessionStorage.setItem(
-      "genConfig",
-      JSON.stringify({
-        prompt: trimmed,
-        slides_count: requestedSlideCount,
-        theme: styleId,
-        style: presentationStyle,
-        source_file_name: docFile?.name || "",
-        source_mime: docFile?.type || "",
-      }),
-    );
-    setPendingSource(docFile);
-    navigate("/generating");
+    try {
+      const deck = await createBlankPresentation({ theme: styleId });
+      sessionStorage.setItem(
+        genConfigKey(deck.id),
+        JSON.stringify({
+          presentation_id: deck.id,
+          prompt: trimmed,
+          slides_count: requestedSlideCount,
+          theme: styleId,
+          style: presentationStyle,
+          source_file_name: docFile?.name || "",
+          source_mime: docFile?.type || "",
+        }),
+      );
+      setPendingSource(deck.id, docFile);
+      navigate(`/presentation/${deck.id}`);
+    } catch (err) {
+      setCreateErr(err?.message || "Презентация не создалась — можно попробовать ещё раз чуть позже.");
+    }
   }
 
   async function handleAuthSuccess() {
@@ -199,14 +206,14 @@ export default function Home({ workspaceMode = false }) {
           setAuthOpen(true);
         }}
         userPlan={user?.plan || "free"}
-        onLockedStyle={() => setUpsellOpen(true)}
+        onLockedStyle={() => { setUpsellReason("style_locked"); setUpsellOpen(true); }}
       />
       {!workspaceMode ? <ValueSection onCreate={handleCreate} canSubmitCreate={isHeroPromptValid(prompt)} /> : null}
       {!workspaceMode ? <HowItWorks /> : null}
       {!workspaceMode ? <Pricing onLogin={() => { setAuthIntent("login"); setAuthOpen(true); }} /> : null}
       {!workspaceMode ? <SiteFooter /> : null}
-      <AuthModal open={authOpen} onClose={closeAuthModal} onSuccess={handleAuthSuccess} />
-      <UpsellModal open={upsellOpen} onClose={() => setUpsellOpen(false)} />
+      <AuthModal open={authOpen} reason={authIntent === "continue-project" ? "more_slides" : "default"} onClose={closeAuthModal} onSuccess={handleAuthSuccess} />
+      <UpsellModal open={upsellOpen} reason={upsellReason} onClose={() => setUpsellOpen(false)} />
     </div>
   );
 }
@@ -421,7 +428,9 @@ export function LandingHeroComposer({
             count={slideCount}
             setCount={setSlideCount}
             isLoggedIn={isLoggedIn}
+            userPlan={userPlan}
             onRequestMoreSlidesLogin={onRequestMoreSlidesLogin}
+            onRequestMoreSlidesUpgrade={onLockedStyle}
           />
           <button
             type="button"
@@ -754,15 +763,25 @@ export function slidesDeclension(n) {
   return "слайдов";
 }
 
-export function Stepper({ count, setCount, isLoggedIn, onRequestMoreSlidesLogin }) {
+export function maxSlidesForPlan(userPlan, isLoggedIn) {
+  if (!isLoggedIn) return planLimits.guest.max_slides_per_presentation;
+  const limit = planLimits[userPlan || "free"]?.max_slides_per_presentation;
+  return limit == null ? MAX_SLIDES_LOGGED_IN : Number(limit) || MAX_SLIDES_LOGGED_IN;
+}
+
+export function Stepper({ count, setCount, isLoggedIn, userPlan = "free", onRequestMoreSlidesLogin, onRequestMoreSlidesUpgrade }) {
+  const maxSlides = maxSlidesForPlan(userPlan, isLoggedIn);
   function increment() {
-    if (count >= MAX_SLIDES_LOGGED_IN) return;
+    if (count >= maxSlides) {
+      if (isLoggedIn) onRequestMoreSlidesUpgrade?.(count + 1);
+      return;
+    }
     const next = count + 1;
     if (!isLoggedIn && count >= MAX_SLIDES_GUEST) {
       onRequestMoreSlidesLogin?.(next);
       return;
     }
-    setCount(Math.min(MAX_SLIDES_LOGGED_IN, next));
+    setCount(Math.min(maxSlides, next));
   }
 
   function decrement() {

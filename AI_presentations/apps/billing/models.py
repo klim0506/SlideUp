@@ -49,13 +49,29 @@ class SlideCredit(models.Model):
     period_start = models.DateTimeField(default=timezone.now)
 
     def available(self) -> int:
-        return max(self.monthly_limit + self.extra_slides - self.used_this_month, 0)
+        monthly_left = max(self.monthly_limit - self.used_this_month, 0)
+        return monthly_left + self.extra_slides
 
     def is_exhausted(self) -> bool:
         return self.available() <= 0
 
     def __str__(self) -> str:
         return f"{self.user} - {self.available()} slides available"
+
+
+class GuestSlideCredit(models.Model):
+    session_key = models.CharField(max_length=64, unique=True)
+    monthly_limit = models.PositiveIntegerField(default=7)
+    used_this_month = models.PositiveIntegerField(default=0)
+    period_start = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def available(self) -> int:
+        return max(self.monthly_limit - self.used_this_month, 0)
+
+    def __str__(self) -> str:
+        return f"guest:{self.session_key} - {self.available()} slides available"
 
 
 class UsageLog(models.Model):

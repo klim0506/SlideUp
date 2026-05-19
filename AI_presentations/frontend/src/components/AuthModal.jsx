@@ -2,7 +2,59 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/lib/design";
 import { GOOGLE_CLIENT_ID, login, loginWithGoogle, navigate, register } from "@/lib/api";
 
-function AuthModal({ open, onClose, onSuccess }) {
+const authCopy = {
+  generate: {
+    loginTitle: "Войдите, чтобы продолжить генерацию",
+    registerTitle: "Создайте аккаунт и продолжите генерацию",
+    subtitle: "Сохраним презентацию в кабинете и спишем слайды из вашего баланса.",
+    ctaLogin: "Войти и продолжить",
+    ctaRegister: "Создать аккаунт",
+  },
+  more_slides: {
+    loginTitle: "Войдите, чтобы выбрать больше слайдов",
+    registerTitle: "Создайте аккаунт для больших презентаций",
+    subtitle: "Гостевой режим ограничен короткими презентациями. В аккаунте доступны месячные кредиты.",
+    ctaLogin: "Войти",
+    ctaRegister: "Создать аккаунт",
+  },
+  save_deck: {
+    loginTitle: "Войдите, чтобы сохранить правки",
+    registerTitle: "Создайте аккаунт, чтобы сохранить презентацию",
+    subtitle: "После входа изменения останутся в вашей библиотеке.",
+    ctaLogin: "Сохранить после входа",
+    ctaRegister: "Создать аккаунт",
+  },
+  export: {
+    loginTitle: "Войдите, чтобы скачать файл",
+    registerTitle: "Создайте аккаунт для экспорта",
+    subtitle: "Экспорт привязан к тарифу и истории презентаций, поэтому нужен аккаунт.",
+    ctaLogin: "Войти и скачать",
+    ctaRegister: "Создать аккаунт",
+  },
+  share: {
+    loginTitle: "Войдите, чтобы поделиться ссылкой",
+    registerTitle: "Создайте аккаунт для публичной ссылки",
+    subtitle: "Публичные ссылки доступны из сохранённых презентаций.",
+    ctaLogin: "Войти",
+    ctaRegister: "Создать аккаунт",
+  },
+  billing: {
+    loginTitle: "Войдите, чтобы управлять тарифом",
+    registerTitle: "Создайте аккаунт для оплаты",
+    subtitle: "Так мы привяжем подписку и слайды к вашему профилю.",
+    ctaLogin: "Войти",
+    ctaRegister: "Создать аккаунт",
+  },
+  default: {
+    loginTitle: "Войти в SlideUp",
+    registerTitle: "Создать аккаунт",
+    subtitle: "",
+    ctaLogin: "Войти",
+    ctaRegister: "Зарегистрироваться",
+  },
+};
+
+function AuthModal({ open, onClose, onSuccess, reason = "default", initialMode = "login" }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -75,7 +127,15 @@ function AuthModal({ open, onClose, onSuccess }) {
     };
   }, [mode, onClose, onSuccess, open]);
 
+  useEffect(() => {
+    if (!open) return;
+    setMode(initialMode);
+    setError("");
+  }, [initialMode, open]);
+
   if (!open) return null;
+
+  const copy = authCopy[reason] || authCopy.default;
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -120,7 +180,7 @@ function AuthModal({ open, onClose, onSuccess }) {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Icon name="logo" size={18} style={{ color: "var(--accent)" }} />
             <span style={{ fontWeight: 700, fontSize: 18, color: "var(--ink)", letterSpacing: "-0.02em" }}>
-              {mode === "login" ? "Войти в SlideUp" : "Создать аккаунт"}
+              {mode === "login" ? copy.loginTitle : copy.registerTitle}
             </span>
           </div>
           <button onClick={onClose} aria-label="Закрыть" style={{ width: 32, height: 32, borderRadius: 999, color: "var(--ink-3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -129,6 +189,9 @@ function AuthModal({ open, onClose, onSuccess }) {
         </div>
 
         <form onSubmit={handleSubmit} style={{ padding: 22, display: "flex", flexDirection: "column", gap: 12 }}>
+          {copy.subtitle ? (
+            <p style={{ margin: "0 0 4px", color: "var(--ink-2)", fontSize: 14, lineHeight: 1.45 }}>{copy.subtitle}</p>
+          ) : null}
           {GOOGLE_CLIENT_ID ? (
             <>
               <div
@@ -160,7 +223,7 @@ function AuthModal({ open, onClose, onSuccess }) {
           {error ? <div className="su-user-hint">{error}</div> : null}
 
           <button type="submit" disabled={loading} className="su-btn su-btn-primary" style={{ justifyContent: "center", padding: 14, marginTop: 6, fontSize: 15, opacity: loading ? 0.6 : 1 }}>
-            {loading ? "Проверяем…" : mode === "login" ? "Войти" : "Зарегистрироваться"}
+            {loading ? "Проверяем…" : mode === "login" ? copy.ctaLogin : copy.ctaRegister}
           </button>
 
           {mode === "register" ? (

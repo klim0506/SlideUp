@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.billing.models import Subscription, UsageLog
-from apps.billing.utils import check_pdf_export, increment_usage
+from apps.billing.utils import check_pdf_export, get_effective_plan, increment_usage
 from apps.presentations.models import Presentation
 
 from .pdf_generator import generate_html, generate_pdf
@@ -42,8 +42,7 @@ def _presentation_data(presentation):
 
 def _is_free_plan(user):
     """Return whether a user's subscription should be treated as the free plan."""
-    subscription = getattr(user, "subscription", None)
-    return not subscription or subscription.plan == Subscription.Plan.FREE
+    return get_effective_plan(user) == Subscription.Plan.FREE
 
 
 def _attachment_response(content, filename, content_type):

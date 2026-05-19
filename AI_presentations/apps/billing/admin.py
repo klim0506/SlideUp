@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import SlideCredit, SlidePack, Subscription, UsageLog, YookassaPayment
+from .models import GuestSlideCredit, SlideCredit, SlidePack, Subscription, UsageLog, YookassaPayment
 
 
 @admin.register(Subscription)
@@ -14,6 +14,12 @@ class SubscriptionAdmin(admin.ModelAdmin):
 class SlideCreditAdmin(admin.ModelAdmin):
     list_display = ("user", "monthly_limit", "extra_slides", "used_this_month", "period_start")
     search_fields = ("user__username", "user__email")
+
+
+@admin.register(GuestSlideCredit)
+class GuestSlideCreditAdmin(admin.ModelAdmin):
+    list_display = ("session_key", "monthly_limit", "used_this_month", "period_start", "updated_at")
+    search_fields = ("session_key",)
 
 
 @admin.register(UsageLog)

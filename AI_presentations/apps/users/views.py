@@ -13,6 +13,7 @@ from .serializers import (
     UserRegistrationSerializer,
 )
 from .services import get_or_create_google_user, verify_google_id_token
+from .services import provision_user_account
 
 
 class UserRegistrationView(generics.CreateAPIView):
@@ -35,8 +36,15 @@ class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
+        if not request.session.session_key:
+            request.session.create()
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        provision_user_account(
+            serializer.validated_data["user"],
+            session_key=request.session.session_key,
+            send_welcome=False,
+        )
         refresh = RefreshToken.for_user(serializer.validated_data["user"])
         return Response(
             {

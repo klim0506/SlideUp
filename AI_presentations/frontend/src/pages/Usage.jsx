@@ -6,12 +6,6 @@ import { Icon } from "@/lib/design";
 import { apiJson, createBlankPresentation, getAccessToken, getMe, navigate } from "@/lib/api";
 import { studentUsageSlidesSummary } from "@/lib/planLimits";
 
-const PACKS = [
-  { id: "pack_50", label: "50 слайдов", price: "99 ₽", detail: "для одного проекта" },
-  { id: "pack_150", label: "150 слайдов", price: "249 ₽", detail: "для серии встреч" },
-  { id: "pack_500", label: "500 слайдов", price: "690 ₽", detail: "для активной команды" },
-];
-
 const PLANS = [
   {
     id: "student",
@@ -29,12 +23,6 @@ const PLANS = [
     slides: "Безлимитные слайды",
     description: "Для бизнеса: больше лимитов, публичные ссылки и спокойная работа с экспортом.",
   },
-];
-
-const DEMO_LOG = [
-  { date: "2026-05-05", action_display: "Генерация", presentation_title: "Стратегия роста", slides_spent: 12 },
-  { date: "2026-05-03", action_display: "Экспорт PDF", presentation_title: "Квартальный отчёт Q1", slides_spent: 0 },
-  { date: "2026-05-01", action_display: "Правка слайда", presentation_title: "Онбординг команды", slides_spent: 1 },
 ];
 
 function formatDate(value) {
@@ -70,7 +58,7 @@ export default function Usage() {
   }, [usage]);
 
   const slidesLeft = usage?.slides_limit == null ? null : Math.max(usage.slides_limit - usage.slides_used, 0);
-  const log = usage?.log?.length ? usage.log : DEMO_LOG;
+  const log = usage?.log || [];
 
   async function loadUsage() {
     if (!getAccessToken()) {
@@ -168,6 +156,7 @@ export default function Usage() {
                   </div>
                 )}
               </StatCard>
+              <StatCard label="Слайды сверх лимита" value={usage?.extra_slides ?? "0"} sub="сохраняются, пока не потратите" />
               <StatCard label="PDF-экспорт" value={usage?.pdf_exports_used ?? "0"} sub={usage?.pdf_exports_limit == null ? "безлимит" : `из ${usage.pdf_exports_limit} в месяц`} />
               <StatCard label="Текущий план" value={formatPlan(usage?.plan, usage?.billing_period)} sub={usage?.current_period_end ? `до ${formatDate(usage.current_period_end)}` : "без активной подписки"} />
             </section>
@@ -197,25 +186,6 @@ export default function Usage() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
-                </Panel>
-
-                <Panel title="Разовые пакеты" icon="plus">
-                  <div className="usage-packs">
-                    {PACKS.map((pack) => (
-                      <button
-                        key={pack.id}
-                        disabled={Boolean(paying)}
-                        onClick={() => createPayment({ pack: pack.id }, pack.id)}
-                        className="su-card"
-                        style={{ padding: 16, textAlign: "left", opacity: paying === pack.id ? 0.6 : 1 }}
-                      >
-                        <div style={{ fontWeight: 750, fontSize: 15 }}>{pack.label}</div>
-                        <div style={{ fontFamily: "var(--font-display)", fontSize: 30, fontWeight: 760, letterSpacing: "-0.03em", color: "var(--accent)", marginTop: 6 }}>{pack.price}</div>
-                        <div style={{ color: "var(--ink-3)", fontSize: 12 }}>{pack.detail}</div>
-                        {paying === pack.id && <div style={{ color: "var(--ink-3)", fontSize: 12, marginTop: 8 }}>Открываем оплату...</div>}
-                      </button>
-                    ))}
                   </div>
                 </Panel>
               </div>
@@ -275,7 +245,7 @@ export default function Usage() {
       </main>
 
       <SiteFooter />
-      <AuthModal open={authOpen} onClose={() => { setAuthOpen(false); navigate("/"); }} onSuccess={loadUsage} />
+      <AuthModal open={authOpen} reason="billing" onClose={() => { setAuthOpen(false); navigate("/"); }} onSuccess={loadUsage} />
     </div>
   );
 }

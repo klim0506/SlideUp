@@ -15,7 +15,7 @@ from .serializers import (
     SubscriptionSerializer,
     UsageLogSerializer,
 )
-from .utils import PLAN_LIMITS, UNLIMITED
+from .utils import PLAN_LIMITS, UNLIMITED, get_effective_plan, get_or_create_slide_credit
 from .yookassa_client import (
     PACK_CONFIG,
     create_yookassa_payment,
@@ -61,19 +61,14 @@ class UsageView(APIView):
         period_end = next_month - timedelta(days=1)
 
         subscription = getattr(request.user, "subscription", None)
-        plan = subscription.plan if subscription else Subscription.Plan.FREE.value
+        plan = get_effective_plan(request.user)
         billing_period = (
             subscription.billing_period
-            if subscription
+            if subscription and plan != Subscription.Plan.FREE.value
             else Subscription.BillingPeriod.MONTHLY.value
         )
         plan_limits = PLAN_LIMITS.get(plan, PLAN_LIMITS[Subscription.Plan.FREE.value])
-        slide_credit, _ = SlideCredit.objects.get_or_create(
-            user=request.user,
-            defaults={
-                "monthly_limit": plan_limits["monthly_slides"],
-            },
-        )
+        slide_credit = get_or_create_slide_credit(request.user)
         slides_limit = (
             None
             if plan_limits["monthly_slides"] >= UNLIMITED
@@ -95,6 +90,9 @@ class UsageView(APIView):
             if slide_credit.period_start.date() >= period_start
             else 0
         )
+        monthly_left = None
+        if slides_limit is not None:
+            monthly_left = max(slides_limit - slides_used, 0)
 
         usage_logs = (
             UsageLog.objects.filter(user=request.user)
@@ -120,6 +118,9 @@ class UsageView(APIView):
                 "current_period_end": subscription.current_period_end if subscription else None,
                 "slides_used": slides_used,
                 "slides_limit": slides_limit,
+                "slides_left": monthly_left,
+                "extra_slides": slide_credit.extra_slides,
+                "slides_available": slide_credit.available(),
                 "pdf_exports_used": pdf_exports_used,
                 "pdf_exports_limit": pdf_exports_limit,
                 "period_start": period_start,
