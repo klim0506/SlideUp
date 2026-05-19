@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from apps.billing.models import Subscription
-from apps.billing.utils import is_pro_plan
+from apps.billing.utils import get_effective_plan, is_pro_plan
 
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -50,8 +50,7 @@ def normalize_theme(theme: str | None) -> str:
 def _user_plan(user) -> str:
     if not user or not user.is_authenticated:
         return Subscription.Plan.FREE.value
-    sub = getattr(user, "subscription", None)
-    return sub.plan if sub else Subscription.Plan.FREE.value
+    return get_effective_plan(user)
 
 
 def _plan_rank(plan: str) -> int:

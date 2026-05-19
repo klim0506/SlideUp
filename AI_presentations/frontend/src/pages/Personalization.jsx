@@ -509,7 +509,7 @@ export default function Personalization() {
         </div>
       )}
 
-      <UpsellModal open={upsellOpen} onClose={() => setUpsellOpen(false)} />
+      <UpsellModal open={upsellOpen} reason="custom_theme" onClose={() => setUpsellOpen(false)} />
     </div>
   );
 }

@@ -206,7 +206,7 @@ export function canUseCustomTheme(userPlan) {
 
 /** Снять водяной знак в просмотрщике могут только пользователи Pro. */
 export function canHideWatermark(userPlan) {
-  return userPlan === "pro";
+  return userPlan === "student" || userPlan === "pro";
 }
 
 function hexToRgb(hex) {

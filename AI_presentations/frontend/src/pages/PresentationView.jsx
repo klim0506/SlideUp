@@ -18,7 +18,9 @@ import { HERO_SOURCE_ACCEPT, LandingHeroComposer, Stepper, StylePicker, isHeroPr
 import { HERO_EXAMPLE_PROMPTS, useTypewriterPlaceholder } from "@/lib/useTypewriterPlaceholder";
 import { SlideHistoryTab } from "@/components/presentation/SlideHistoryTab";
 import { SlideVersionsColumn } from "@/components/presentation/SlideVersionsColumn";
-import { apiFetch, apiJson, clearTokens, getAccessToken, getMe, logout, navigate } from "@/lib/api";
+import { PresentationGeneratingState } from "@/pages/Generating";
+import { apiFetch, apiJson, clearTokens, createBlankPresentation, getAccessToken, getMe, logout, navigate } from "@/lib/api";
+import { genConfigKey, setPendingSource } from "@/lib/genHandoff";
 import {
   SLIDE_SID_KEY,
   cloneSlideSnapshot,
@@ -264,6 +266,7 @@ function CreatePresentationWorkspace() {
   const [authOpen, setAuthOpen] = useState(false);
   const [authIntent, setAuthIntent] = useState("login");
   const [upsellOpen, setUpsellOpen] = useState(false);
+  const [upsellReason, setUpsellReason] = useState("general");
   const [slideAreaEl, setSlideAreaEl] = useState(null);
   const [slideDims, setSlideDims] = useState(null);
   const fileInputRef = useRef(null);
@@ -315,36 +318,28 @@ function CreatePresentationWorkspace() {
     const trimmed = prompt.trim();
     const requestedSlideCount = options.slideCount ?? slideCount;
 
-    if (docFile) {
-      setCreateBusy(true);
-      try {
-        const fd = new FormData();
-        fd.append("prompt", trimmed);
-        fd.append("slides_count", String(requestedSlideCount));
-        fd.append("theme", styleId);
-        fd.append("source_file", docFile);
-        const data = await apiJson("/api/generate/", { method: "POST", body: fd });
-        sessionStorage.removeItem("genConfig");
-        navigate(`/presentation/${data.id}`);
-      } catch (e) {
-        setCreateErr(e?.message || "Презентация не создалась — можно попробовать ещё раз чуть позже.");
-      } finally {
-        setCreateBusy(false);
-      }
-      return;
+    setCreateBusy(true);
+    try {
+      const deck = await createBlankPresentation({ theme: styleId });
+      sessionStorage.setItem(
+        genConfigKey(deck.id),
+        JSON.stringify({
+          presentation_id: deck.id,
+          prompt: trimmed,
+          slides_count: requestedSlideCount,
+          theme: styleId,
+          style: "pitch",
+          source_file_name: docFile?.name || "",
+          source_mime: docFile?.type || "",
+        }),
+      );
+      setPendingSource(deck.id, docFile);
+      navigate(`/presentation/${deck.id}`);
+    } catch (e) {
+      setCreateErr(e?.message || "Презентация не создалась — можно попробовать ещё раз чуть позже.");
+    } finally {
+      setCreateBusy(false);
     }
-
-    sessionStorage.setItem(
-      "genConfig",
-      JSON.stringify({
-        prompt: trimmed,
-        slides_count: requestedSlideCount,
-        theme: styleId,
-        source_file_name: "",
-        source_mime: "",
-      }),
-    );
-    navigate("/generating");
   }
 
   async function handleAuthSuccess() {
@@ -494,7 +489,7 @@ function CreatePresentationWorkspace() {
                       setAuthOpen(true);
                     }}
                     userPlan={user?.plan || "free"}
-                    onLockedStyle={() => setUpsellOpen(true)}
+                    onLockedStyle={() => { setUpsellReason("style_locked"); setUpsellOpen(true); }}
                     onClearCreateErr={() => setCreateErr("")}
                     showSpeech={false}
                   />
@@ -505,8 +500,8 @@ function CreatePresentationWorkspace() {
         </section>
       </main>
 
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSuccess={handleAuthSuccess} />
-      <UpsellModal open={upsellOpen} onClose={() => setUpsellOpen(false)} />
+      <AuthModal open={authOpen} reason={authIntent === "continue-project" ? "more_slides" : "default"} onClose={() => setAuthOpen(false)} onSuccess={handleAuthSuccess} />
+      <UpsellModal open={upsellOpen} reason={upsellReason} onClose={() => setUpsellOpen(false)} />
     </div>
   );
 }
@@ -526,6 +521,9 @@ function ExistingPresentationView({ id, publicView = false }) {
   const [shareUrl, setShareUrl] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
   const [upsellOpen, setUpsellOpen] = useState(false);
+  const [authReason, setAuthReason] = useState("default");
+  const [upsellReason, setUpsellReason] = useState("general");
+  const [upsellContext, setUpsellContext] = useState({});
   const [billingUsage, setBillingUsage] = useState(null);
   const [user, setUser] = useState(null);
 
@@ -534,6 +532,7 @@ function ExistingPresentationView({ id, publicView = false }) {
 
   const [sessionExpired, setSessionExpired] = useState(false);
   const [presentationReloadNonce, setPresentationReloadNonce] = useState(0);
+  const [generationConfig, setGenerationConfig] = useState(null);
 
   const [designModalOpen, setDesignModalOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -608,6 +607,25 @@ function ExistingPresentationView({ id, publicView = false }) {
 
   const userPlan = user?.plan || "free";
 
+  function openAuth(reason = "default") {
+    setAuthReason(reason);
+    setAuthOpen(true);
+  }
+
+  function openUpsell(reason = "general", context = {}) {
+    setUpsellReason(reason);
+    setUpsellContext(context || {});
+    setUpsellOpen(true);
+  }
+
+  function openUpsellFromError(err, fallbackReason = "general") {
+    const data = err?.data || {};
+    const reason = data.reason === "slide_limit_exceeded" || data.reason === "max_slides_per_presentation_exceeded"
+      ? "insufficient_slides"
+      : fallbackReason;
+    openUpsell(reason, data);
+  }
+
   const normalizedDeckTheme = useMemo(
     () => normalizeLegacyThemeId(presentation?.theme ?? theme ?? "light"),
     [presentation?.theme, theme],
@@ -631,7 +649,7 @@ function ExistingPresentationView({ id, publicView = false }) {
       const nid = normalizeLegacyThemeId(nextId);
       if (nid === CUSTOM_THEME_ID) {
         if (!canUseCustomTheme(userPlan)) {
-          setUpsellOpen(true);
+          openUpsell("custom_theme");
           return;
         }
         setDisplayThemeId(CUSTOM_THEME_ID);
@@ -639,7 +657,7 @@ function ExistingPresentationView({ id, publicView = false }) {
       }
       const preset = STYLE_PRESETS.find((p) => p.id === nid);
       if (preset && !canUnlockPreset(userPlan, preset)) {
-        setUpsellOpen(true);
+        openUpsell("style_locked");
         return;
       }
       setCustomColorDraft(null);
@@ -651,11 +669,11 @@ function ExistingPresentationView({ id, publicView = false }) {
   const saveCustomThemeToDeck = useCallback(async () => {
     if (publicView || !presentation?.id) return;
     if (!getAccessToken()) {
-      setAuthOpen(true);
+      openAuth("save_deck");
       return;
     }
     if (!canUseCustomTheme(userPlan)) {
-      setUpsellOpen(true);
+      openUpsell("custom_theme");
       return;
     }
     const merged = { ...(presentation?.theme_custom || {}), ...(customColorDraft || {}) };
@@ -700,7 +718,7 @@ function ExistingPresentationView({ id, publicView = false }) {
     async (patch, successNotice) => {
       if (publicView || !presentation?.id) return;
       if (!getAccessToken()) {
-        setAuthOpen(true);
+        openAuth("save_deck");
         return;
       }
       setPersistBusy(true);
@@ -720,7 +738,7 @@ function ExistingPresentationView({ id, publicView = false }) {
         const msg = err.message || "Изменения не сохранились — попробуйте ещё раз.";
         setNotice(msg);
         setSaveStatus("error");
-        if (err.status === 429 || err.data?.show_upsell) setUpsellOpen(true);
+        if (err.status === 429 || err.data?.show_upsell) openUpsellFromError(err);
       } finally {
         setPersistBusy(false);
       }
@@ -836,7 +854,7 @@ function ExistingPresentationView({ id, publicView = false }) {
       if (!presentation || publicView) return;
       pushUndo();
       if (!getAccessToken()) {
-        setAuthOpen(true);
+        openAuth("generate");
         return;
       }
       const mode =
@@ -904,7 +922,7 @@ function ExistingPresentationView({ id, publicView = false }) {
         await persistDeckPatch(patch, "Презентация обновлена — у каждого слайда новая версия в истории.");
       } catch (err) {
         setNotice(err.message || "ИИ сейчас не смог обновить всю презентацию — можно повторить запрос позже.");
-        if (err.status === 429 || err.data?.show_upsell) setUpsellOpen(true);
+        if (err.status === 429 || err.data?.show_upsell) openUpsellFromError(err);
         throw err;
       } finally {
         setDeckAiBusy(false);
@@ -918,7 +936,7 @@ function ExistingPresentationView({ id, publicView = false }) {
     async (text, focusChrono) => {
       if (!presentation || publicView) return;
       if (!getAccessToken()) {
-        setAuthOpen(true);
+        openAuth("generate");
         return;
       }
       const slideIndex = historySlideSafe;
@@ -944,7 +962,7 @@ function ExistingPresentationView({ id, publicView = false }) {
         setLocalAiMessages((m) => [...m, { role: "assistant", text: "Готово — изменения сохранены как новая версия этого слайда." }]);
       } catch (err) {
         setLocalAiMessages((m) => [...m, { role: "assistant", text: err.message || "Запрос не прошёл — попробуйте переформулировать или повторить чуть позже." }]);
-        if (err.status === 429 || err.data?.show_upsell) setUpsellOpen(true);
+        if (err.status === 429 || err.data?.show_upsell) openUpsellFromError(err);
       } finally {
         setLocalAiBusy(false);
       }
@@ -1090,7 +1108,7 @@ function ExistingPresentationView({ id, publicView = false }) {
       if (typeof index !== "number" || Number.isNaN(index)) return;
       if (index < 0 || index >= slides.length) return;
       if (index >= unlockedSlideCount) {
-        setUpsellOpen(true);
+        openUpsell("insufficient_slides", { available: unlockedSlideCount, requested: slides.length, missing: slides.length - unlockedSlideCount });
         return;
       }
       if (index !== currentSlide) {
@@ -1334,6 +1352,16 @@ function ExistingPresentationView({ id, publicView = false }) {
         const data = await apiJson(`/api/presentations/${id}/`);
         setSessionExpired(false);
         setPresentation(data);
+        if (!publicView && Array.isArray(data.slides) && data.slides.length === 0) {
+          try {
+            const rawGenerationConfig = sessionStorage.getItem(genConfigKey(data.id));
+            setGenerationConfig(rawGenerationConfig ? { ...JSON.parse(rawGenerationConfig), presentation_id: data.id } : null);
+          } catch {
+            setGenerationConfig(null);
+          }
+        } else {
+          setGenerationConfig(null);
+        }
         setTheme(data.theme || "light");
         setCurrentSlide(0);
 
@@ -1388,7 +1416,7 @@ function ExistingPresentationView({ id, publicView = false }) {
           setUser(null);
           setSessionExpired(true);
           setError("");
-          setAuthOpen(true);
+          openAuth("default");
         } else {
           setSessionExpired(false);
           if (status === 404 && !publicView) {
@@ -1486,7 +1514,7 @@ function ExistingPresentationView({ id, publicView = false }) {
     setNotice("");
     if (!getAccessToken()) {
       pendingDownloadRef.current = format;
-      setAuthOpen(true);
+      openAuth("export");
       return;
     }
 
@@ -1494,12 +1522,12 @@ function ExistingPresentationView({ id, publicView = false }) {
       const response = await apiFetch(`/api/export/${id}/${format}/`);
       if (response.status === 401) {
         pendingDownloadRef.current = format;
-        setAuthOpen(true);
+        openAuth("export");
         return;
       }
       if (response.status === 403) {
         const data = await response.json().catch(() => ({}));
-        if (data.show_upsell) setUpsellOpen(true);
+        if (data.show_upsell) openUpsell("pdf_limit", data);
         setNotice(data.detail || "Экспорт на вашем тарифе пока недоступен.");
         return;
       }
@@ -1524,7 +1552,7 @@ function ExistingPresentationView({ id, publicView = false }) {
   async function sharePresentation() {
     setNotice("");
     if (!getAccessToken()) {
-      setAuthOpen(true);
+      openAuth("share");
       return;
     }
 
@@ -1534,7 +1562,7 @@ function ExistingPresentationView({ id, publicView = false }) {
       await navigator.clipboard?.writeText(data.public_url);
       setNotice("Публичная ссылка скопирована");
     } catch (err) {
-      if (err.data?.show_upsell) setUpsellOpen(true);
+      if (err.data?.show_upsell) openUpsell("share_link", err.data);
       setNotice(err.message || "Публичная ссылка сейчас не включилась — попробуйте позже.");
     }
   }
@@ -1561,7 +1589,7 @@ function ExistingPresentationView({ id, publicView = false }) {
   function beginTitleEdit() {
     if (publicView || !presentation) return;
     if (!getAccessToken()) {
-      setAuthOpen(true);
+      openAuth("save_deck");
       return;
     }
     titleEditDismissRef.current = false;
@@ -1585,7 +1613,7 @@ function ExistingPresentationView({ id, publicView = false }) {
       return;
     }
     if (!getAccessToken()) {
-      setAuthOpen(true);
+      openAuth("save_deck");
       return;
     }
     try {
@@ -1623,7 +1651,7 @@ function ExistingPresentationView({ id, publicView = false }) {
           <p className="su-user-hint" style={{ margin: "0 auto 18px", maxWidth: 520, textAlign: "center" }}>{loadProblemMessage}</p>
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             {sessionExpired ? (
-              <button type="button" className="su-btn su-btn-accent" onClick={() => setAuthOpen(true)}>
+                <button type="button" className="su-btn su-btn-accent" onClick={() => openAuth("default")}>
                 Войти
               </button>
             ) : null}
@@ -1644,13 +1672,31 @@ function ExistingPresentationView({ id, publicView = false }) {
             </button>
           </div>
         </main>
-        <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSuccess={handleAuthSuccess} />
+        <AuthModal open={authOpen} reason={authReason} onClose={() => setAuthOpen(false)} onSuccess={handleAuthSuccess} />
       </div>
     );
   }
 
   const headerTitle = (presentation.title || "").trim() || "Без названия";
   const profileLabel = user?.email || "Аккаунт";
+  if (!publicView && generationConfig && isEmptyDeck) {
+    return (
+      <PresentationGeneratingState
+        presentationId={presentation.id}
+        initialConfig={generationConfig}
+        onGenerated={(data) => {
+          setGenerationConfig(null);
+          setPresentation(data);
+          setTheme(data.theme || "light");
+          setCurrentSlide(0);
+          void refreshExportUsage();
+        }}
+        onCancel={() => navigate("/")}
+        onUpgrade={openUpsellFromError}
+      />
+    );
+  }
+
   const currentVersionLabel = `v${Math.max(1, currentSlideVersionsChrono.length)}`;
   return (
     <div
@@ -1757,7 +1803,7 @@ function ExistingPresentationView({ id, publicView = false }) {
                     onClick={() => {
                       setExportMenuOpen(false);
                       if (item.locked) {
-                        setUpsellOpen(true);
+                        openUpsell("pdf_limit");
                         return;
                       }
                       download(item.format);
@@ -2131,10 +2177,10 @@ function ExistingPresentationView({ id, publicView = false }) {
                           title={item.locked ? "PDF доступен на более высоком тарифе" : `Скачать ${item.label}`}
                           onClick={() => {
                             setExportMenuOpen(false);
-                            if (item.locked) {
-                              setUpsellOpen(true);
-                              return;
-                            }
+                              if (item.locked) {
+                                openUpsell("pdf_limit");
+                                return;
+                              }
                             download(item.format);
                           }}
                           style={{
@@ -2326,8 +2372,8 @@ function ExistingPresentationView({ id, publicView = false }) {
                         presentationId={id}
                         user={user}
                         initialTheme={presentation?.theme || theme}
-                        onAuthRequest={() => setAuthOpen(true)}
-                        onUpgradeRequest={() => setUpsellOpen(true)}
+                        onAuthRequest={() => openAuth("generate")}
+                        onUpgradeRequest={openUpsellFromError}
                         onGenerated={() => setPresentationReloadNonce((n) => n + 1)}
                       />
                     ) : null
@@ -2406,7 +2452,7 @@ function ExistingPresentationView({ id, publicView = false }) {
                     promptSeed={deckAiPromptSeed}
                     onBusyChange={setDeckAiBusy}
                     onApplyDeckAssist={handleApplyDeckAssist}
-                    onAuthRequest={() => setAuthOpen(true)}
+                    onAuthRequest={() => openAuth("generate")}
                     onCollapse={isEmptyDeck ? () => setAiAsideCollapsedOverride(true) : null}
                   />
                 </div>
@@ -2454,7 +2500,7 @@ function ExistingPresentationView({ id, publicView = false }) {
               promptSeed={deckAiPromptSeed}
               onBusyChange={setDeckAiBusy}
               onApplyDeckAssist={handleApplyDeckAssist}
-              onAuthRequest={() => setAuthOpen(true)}
+              onAuthRequest={() => openAuth("generate")}
             />
           </div>
         </div>
@@ -2560,7 +2606,7 @@ function ExistingPresentationView({ id, publicView = false }) {
                 }}
                 presentationId={id}
                 themeSaveBusy={themeSaveBusy}
-                onLockedPreset={() => setUpsellOpen(true)}
+                onLockedPreset={() => openUpsell("style_locked")}
                 publicView={publicView}
                 fontScale={fontScale}
                 onFontScaleChange={(v) => setFontScale(clampFontScale(v))}
@@ -2576,8 +2622,8 @@ function ExistingPresentationView({ id, publicView = false }) {
         </div>
       ) : null}
 
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSuccess={handleAuthSuccess} />
-      <UpsellModal open={upsellOpen} onClose={() => setUpsellOpen(false)} />
+      <AuthModal open={authOpen} reason={authReason} onClose={() => setAuthOpen(false)} onSuccess={handleAuthSuccess} />
+      <UpsellModal open={upsellOpen} reason={upsellReason} context={upsellContext} onClose={() => setUpsellOpen(false)} />
     </div>
   );
 }
@@ -4609,7 +4655,7 @@ function EditorEmptyHero({
       onGenerated?.(data);
     } catch (err) {
       setCreateErr(err?.message || "Презентация не создалась — попробуйте ещё раз.");
-      if (err?.status === 429 || err?.data?.show_upsell) onUpgradeRequest?.();
+      if (err?.status === 429 || err?.data?.show_upsell) onUpgradeRequest?.(err);
       setBusy(false);
     }
   }
@@ -4697,7 +4743,9 @@ function EditorEmptyHero({
               count={slideCount}
               setCount={setSlideCount}
               isLoggedIn={Boolean(user)}
+              userPlan={userPlan}
               onRequestMoreSlidesLogin={() => onAuthRequest?.()}
+              onRequestMoreSlidesUpgrade={onUpgradeRequest}
             />
             <button
               type="button"

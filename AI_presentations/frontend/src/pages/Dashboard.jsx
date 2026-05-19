@@ -43,6 +43,8 @@ export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [exportNotice, setExportNotice] = useState("");
   const [upsellOpen, setUpsellOpen] = useState(false);
+  const [upsellReason, setUpsellReason] = useState("general");
+  const [authReason, setAuthReason] = useState("default");
   const [pendingDelete, setPendingDelete] = useState(null);
   const [createBusy, setCreateBusy] = useState(false);
 
@@ -85,6 +87,7 @@ export default function Dashboard() {
   async function createPresentation() {
     if (createBusy) return;
     if (!getAccessToken()) {
+      setAuthReason("save_deck");
       setAuthOpen(true);
       return;
     }
@@ -94,7 +97,10 @@ export default function Dashboard() {
       const deck = await createBlankPresentation();
       navigate(`/presentation/${deck.id}`);
     } catch (err) {
-      if (err.status === 401) setAuthOpen(true);
+      if (err.status === 401) {
+        setAuthReason("save_deck");
+        setAuthOpen(true);
+      }
       else setError(err.message || "Не получилось создать презентацию — попробуйте ещё раз.");
     } finally {
       setCreateBusy(false);
@@ -108,12 +114,16 @@ export default function Dashboard() {
     try {
       const response = await apiFetch(`/api/export/${deck.id}/${format}/`);
       if (response.status === 401) {
+        setAuthReason("export");
         setAuthOpen(true);
         return;
       }
       if (response.status === 403) {
         const data = await response.json().catch(() => ({}));
-        if (data.show_upsell) setUpsellOpen(true);
+        if (data.show_upsell) {
+          setUpsellReason("pdf_limit");
+          setUpsellOpen(true);
+        }
         setExportNotice(data.detail || "Экспорт на вашем тарифе пока недоступен — можно оформить подписку выше.");
         return;
       }
@@ -260,6 +270,7 @@ export default function Dashboard() {
 
       <AuthModal
         open={authOpen}
+        reason={authReason}
         onClose={() => { setAuthOpen(false); navigate("/"); }}
         onSuccess={() => {
           getMe().then(setUser).catch(() => null);
@@ -267,7 +278,7 @@ export default function Dashboard() {
         }}
       />
 
-      <UpsellModal open={upsellOpen} onClose={() => setUpsellOpen(false)} />
+      <UpsellModal open={upsellOpen} reason={upsellReason} onClose={() => setUpsellOpen(false)} />
 
       <DeletePresentationModal deck={pendingDelete} onClose={() => setPendingDelete(null)} onDeleted={handlePresentationDeleted} />
     </div>

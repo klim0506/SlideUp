@@ -1,53 +1,105 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Icon } from "@/lib/design";
-import { apiJson } from "@/lib/api";
+import { apiJson, navigate } from "@/lib/api";
+import { planLimits } from "@/lib/planLimits";
 
-const proOffers = {
-  yearly: {
-    id: "pro_yearly",
-    label: "Год",
-    badge: "Скидка 24%",
-    title: "Pro на год",
-    price: "12 677 ₽/год",
-    monthlyHint: "от 1 060 ₽/мес",
-    note: "Оплата раз в год, максимум выгоды.",
-    payload: { plan: "pro", billing_period: "yearly" },
+const planOffers = {
+  student: {
+    plan: "student",
+    title: "Student",
+    monthly: "490 ₽/мес",
+    yearly: "4 469 ₽/год",
+    monthlyHint: `${planLimits.student.monthly_slides} слайдов в месяц`,
+    benefits: ["Больше слайдов каждый месяц", "Все готовые стили", "PDF и PPTX без лимита", "Без водяного знака"],
   },
-  monthly: {
-    id: "pro_monthly",
-    label: "Месяц",
-    title: "Pro на месяц",
-    price: "1 390 ₽/мес",
-    monthlyHint: "помесячная оплата",
-    note: "Можно продлевать только когда нужен Pro.",
-    payload: { plan: "pro", billing_period: "monthly" },
+  pro: {
+    plan: "pro",
+    title: "Pro",
+    monthly: "1 390 ₽/мес",
+    yearly: "12 677 ₽/год",
+    monthlyHint: "безлимитные слайды",
+    benefits: ["Безлимитные слайды", "Своя тема и цвета", "Публичные ссылки", "PDF и PPTX без лимита"],
   },
 };
 
-const proBenefits = [
-  "Безлимитные слайды",
-  "Все стили презентаций",
-  "Публичные ссылки",
-  "PDF и PPTX без лимита",
-  "Приоритетная генерация",
+const slidePacks = [
+  { id: "pack_50", label: "50 слайдов", price: "99 ₽" },
+  { id: "pack_150", label: "150 слайдов", price: "249 ₽" },
+  { id: "pack_500", label: "500 слайдов", price: "690 ₽" },
 ];
 
-function UpsellModal({ open, onClose }) {
+const copyByReason = {
+  insufficient_slides: {
+    icon: "credit",
+    title: "Не хватает слайдов для этой генерации",
+    body: ({ requested, available, missing }) =>
+      `Нужно ${requested || "несколько"} слайдов, сейчас доступно ${available ?? 0}. Не хватает ${missing ?? "ещё нескольких"}.`,
+    plan: "student",
+    showPacks: true,
+    primary: "Выбрать подписку",
+  },
+  pdf_limit: {
+    icon: "download",
+    title: "PDF-экспорт закончился на этом тарифе",
+    body: () => "На Student и Pro можно скачивать PDF без месячного лимита.",
+    plan: "student",
+    primary: "Перейти на Student",
+  },
+  style_locked: {
+    icon: "palette",
+    title: "Этот стиль доступен на Student",
+    body: () => "Student открывает все готовые стили для учебных, личных и регулярных рабочих презентаций.",
+    plan: "student",
+    primary: "Открыть стили",
+  },
+  custom_theme: {
+    icon: "palette",
+    title: "Своя тема доступна на Pro",
+    body: () => "Pro нужен для фирменных цветов, публичных ссылок и командной бизнес-работы.",
+    plan: "pro",
+    primary: "Перейти на Pro",
+  },
+  hide_watermark: {
+    icon: "sparkles",
+    title: "Без водяного знака — на Student",
+    body: () => "Student и Pro позволяют экспортировать и показывать презентации без водяного знака.",
+    plan: "student",
+    primary: "Убрать водяной знак",
+  },
+  share_link: {
+    icon: "share",
+    title: "Публичные ссылки доступны на Pro",
+    body: () => "Pro подходит для бизнес-презентаций, когда нужно быстро отправить ссылку клиенту или команде.",
+    plan: "pro",
+    primary: "Включить Pro",
+  },
+  general: {
+    icon: "sparkles",
+    title: "Выберите тариф для этой задачи",
+    body: () => "Student закрывает регулярную работу, Pro — бизнес-сценарии без лимитов.",
+    plan: "student",
+    primary: "Выбрать тариф",
+  },
+};
+
+function UpsellModal({ open, onClose, reason = "general", context = {}, onReduceSlides }) {
   const [period, setPeriod] = useState("yearly");
   const [loadingOffer, setLoadingOffer] = useState("");
   const [error, setError] = useState("");
+  const copy = copyByReason[reason] || copyByReason.general;
+  const selectedPlanKey = copy.plan || "student";
+  const selectedOffer = planOffers[selectedPlanKey] || planOffers.student;
+  const body = useMemo(() => copy.body(context || {}), [copy, context]);
 
   if (!open) return null;
 
-  const selectedOffer = proOffers[period];
-
-  async function handlePayment(offer) {
+  async function handlePayment(payload, id) {
     setError("");
-    setLoadingOffer(offer.id);
+    setLoadingOffer(id);
     try {
       const data = await apiJson("/api/billing/yookassa/pay/", {
         method: "POST",
-        body: JSON.stringify(offer.payload),
+        body: JSON.stringify(payload),
       });
       window.location.href = data.confirmation_url;
     } catch (err) {
@@ -56,90 +108,107 @@ function UpsellModal({ open, onClose }) {
     }
   }
 
+  const price = selectedOffer[period];
+
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(20,19,15,.55)", padding: 20 }}>
-      <div className="su-card upsell-pro-modal" style={{ width: "min(720px, 94vw)", padding: 24, boxShadow: "var(--sh-lg)" }}>
+      <div className="su-card upsell-pro-modal" style={{ width: "min(760px, 94vw)", padding: 24, boxShadow: "var(--sh-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 16, marginBottom: 20 }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: 24, lineHeight: 1.15, letterSpacing: "-0.02em" }}>Разблокируйте больше возможностей</h2>
-            <p style={{ margin: "8px 0 0", color: "var(--ink-2)", fontSize: 15, lineHeight: 1.45 }}>
-              Оформите Pro, чтобы создавать презентации без лимитов, использовать все стили и свободно экспортировать результат.
-            </p>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ width: 42, height: 42, borderRadius: 12, display: "grid", placeItems: "center", background: "var(--accent-soft)", color: "var(--accent)", flexShrink: 0 }}>
+              <Icon name={copy.icon} size={20} stroke={2} />
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 24, lineHeight: 1.15, letterSpacing: "-0.02em" }}>{copy.title}</h2>
+              <p style={{ margin: "8px 0 0", color: "var(--ink-2)", fontSize: 15, lineHeight: 1.45 }}>{body}</p>
+            </div>
           </div>
           <button aria-label="Закрыть" onClick={onClose} style={{ color: "var(--ink-3)", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <Icon name="x" size={17} />
           </button>
         </div>
 
-        <div className="upsell-pro-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.05fr) minmax(260px, .95fr)", gap: 18, alignItems: "stretch" }}>
-          <div style={{ padding: 20, borderRadius: "var(--r-lg)", background: "linear-gradient(155deg, color-mix(in srgb, var(--accent) 92%, white) 0%, #4f8df7 48%, var(--accent-deep) 100%)", color: "var(--accent-fg)", boxShadow: "0 20px 46px -24px rgba(37, 99, 235, 0.46)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, fontSize: 13, fontWeight: 750, opacity: 0.94 }}>
-              <Icon name="sparkles" size={15} stroke={2} />
-              Pro
-            </div>
-            <div style={{ fontSize: 38, fontWeight: 780, letterSpacing: "-0.04em", lineHeight: 1.06 }}>{selectedOffer.price}</div>
-            <div style={{ marginTop: 6, fontSize: 14, opacity: 0.88 }}>{selectedOffer.monthlyHint}</div>
-            <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,.26)", display: "grid", gap: 10 }}>
-              {proBenefits.map((benefit) => (
-                <div key={benefit} style={{ display: "flex", gap: 9, alignItems: "center", fontSize: 14, lineHeight: 1.3 }}>
-                  <Icon name="check" size={14} stroke={2.2} />
-                  <span>{benefit}</span>
-                </div>
+        <div className="upsell-pro-grid" style={{ display: "grid", gridTemplateColumns: copy.showPacks ? "minmax(0, 1fr) minmax(280px, .9fr)" : "1fr", gap: 18, alignItems: "stretch" }}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ padding: 4, display: "inline-grid", gridTemplateColumns: "1fr 1fr", gap: 4, borderRadius: "var(--r-md)", background: "var(--surface-2)", border: "1px solid var(--line)", maxWidth: 260 }}>
+              {[
+                ["monthly", "Месяц"],
+                ["yearly", "Год"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setPeriod(value)}
+                  style={{
+                    minHeight: 40,
+                    borderRadius: "calc(var(--r-md) - 4px)",
+                    background: period === value ? "var(--surface)" : "transparent",
+                    color: period === value ? "var(--ink)" : "var(--ink-2)",
+                    boxShadow: period === value ? "var(--sh-sm)" : "none",
+                    fontWeight: 750,
+                  }}
+                >
+                  {label}
+                </button>
               ))}
             </div>
+
+            <div style={{ padding: 20, border: "1px solid var(--line)", borderRadius: "var(--r-lg)", background: "var(--surface)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "baseline" }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 780 }}>{selectedOffer.title}</div>
+                  <div style={{ marginTop: 4, color: "var(--ink-3)", fontSize: 13 }}>{selectedOffer.monthlyHint}</div>
+                </div>
+                <div style={{ color: "var(--accent)", fontSize: 26, fontWeight: 780, letterSpacing: "-0.03em" }}>{price}</div>
+              </div>
+              <div style={{ marginTop: 16, display: "grid", gap: 8 }}>
+                {selectedOffer.benefits.map((benefit) => (
+                  <div key={benefit} style={{ display: "flex", gap: 9, alignItems: "center", color: "var(--ink-2)", fontSize: 14 }}>
+                    <Icon name="check" size={14} stroke={2.2} style={{ color: "var(--accent)" }} />
+                    <span>{benefit}</span>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="su-btn su-btn-accent"
+                disabled={Boolean(loadingOffer)}
+                onClick={() => handlePayment({ plan: selectedOffer.plan, billing_period: period }, `${selectedOffer.plan}_${period}`)}
+                style={{ width: "100%", minHeight: 48, fontSize: 15, fontWeight: 750, marginTop: 18 }}
+              >
+                {loadingOffer ? "Открываем оплату..." : copy.primary}
+                {!loadingOffer ? <Icon name="arrow-right" size={16} /> : null}
+              </button>
+              {onReduceSlides && Number(context?.available) > 0 ? (
+                <button type="button" className="su-btn su-btn-outline" onClick={() => onReduceSlides(Number(context.available))} style={{ width: "100%", minHeight: 44, marginTop: 10 }}>
+                  Уменьшить до {context.available} слайдов
+                </button>
+              ) : null}
+            </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ padding: 4, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, borderRadius: "var(--r-md)", background: "var(--surface-2)", border: "1px solid var(--line)" }}>
-              {Object.entries(proOffers).map(([key, offer]) => {
-                const active = period === key;
-                return (
+          {copy.showPacks ? (
+            <div style={{ padding: 18, border: "1px solid var(--line)", borderRadius: "var(--r-lg)", background: "var(--surface)" }}>
+              <div style={{ fontSize: 16, fontWeight: 760 }}>Нужны только слайды?</div>
+              <p style={{ margin: "6px 0 14px", color: "var(--ink-3)", fontSize: 13, lineHeight: 1.45 }}>
+                Разовый пакет сохраняется, пока вы не потратите слайды. Показываем его только для таких случаев.
+              </p>
+              <div style={{ display: "grid", gap: 9 }}>
+                {slidePacks.map((pack) => (
                   <button
-                    key={offer.id}
+                    key={pack.id}
                     type="button"
-                    onClick={() => setPeriod(key)}
-                    aria-pressed={active}
-                    style={{
-                      minHeight: 48,
-                      borderRadius: "calc(var(--r-md) - 4px)",
-                      background: active ? "var(--surface)" : "transparent",
-                      color: active ? "var(--ink)" : "var(--ink-2)",
-                      boxShadow: active ? "var(--sh-sm)" : "none",
-                      fontWeight: 750,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 7,
-                    }}
+                    className="su-card"
+                    disabled={Boolean(loadingOffer)}
+                    onClick={() => handlePayment({ pack: pack.id }, pack.id)}
+                    style={{ padding: 13, textAlign: "left", display: "flex", justifyContent: "space-between", gap: 12, opacity: loadingOffer === pack.id ? 0.6 : 1 }}
                   >
-                    <span>{offer.label}</span>
-                    {offer.badge ? (
-                      <span style={{ padding: "2px 7px", borderRadius: 999, background: "var(--accent)", color: "white", fontSize: 11, lineHeight: 1.4 }}>
-                        {offer.badge}
-                      </span>
-                    ) : null}
+                    <span style={{ fontWeight: 750 }}>{pack.label}</span>
+                    <span style={{ color: "var(--accent)", fontWeight: 780 }}>{pack.price}</span>
                   </button>
-                );
-              })}
+                ))}
+              </div>
             </div>
-
-            <div style={{ flex: 1, padding: 18, border: "1px solid var(--line)", borderRadius: "var(--r-lg)", background: "var(--surface)" }}>
-              <div style={{ fontSize: 17, fontWeight: 760, marginBottom: 7 }}>{selectedOffer.title}</div>
-              <p style={{ margin: 0, color: "var(--ink-2)", fontSize: 14, lineHeight: 1.5 }}>{selectedOffer.note}</p>
-              <div style={{ marginTop: 18, color: "var(--accent)", fontSize: 26, fontWeight: 780, letterSpacing: "-0.03em" }}>{selectedOffer.price}</div>
-              <div style={{ marginTop: 4, color: "var(--ink-3)", fontSize: 13 }}>{selectedOffer.monthlyHint}</div>
-            </div>
-
-            <button
-              className="su-btn su-btn-accent"
-              disabled={Boolean(loadingOffer)}
-              onClick={() => handlePayment(selectedOffer)}
-              style={{ width: "100%", minHeight: 48, fontSize: 15, fontWeight: 750 }}
-            >
-              {loadingOffer ? "Открываем оплату..." : "Оформить Pro"}
-              {!loadingOffer ? <Icon name="arrow-right" size={16} /> : null}
-            </button>
-          </div>
+          ) : null}
         </div>
 
         {error ? <p className="su-user-hint" style={{ margin: "14px 0 0" }}>{error}</p> : null}

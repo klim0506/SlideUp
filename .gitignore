@@ -51,6 +51,9 @@ browser-smoke-profile*/
 playwright-report/
 test-results/
 
+# Local Codex/Claude worktrees
+AI_presentations/.claude/worktrees/
+
 # Generated screenshots and local captures
 *.png
 *.jpg

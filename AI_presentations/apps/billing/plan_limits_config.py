@@ -55,3 +55,14 @@ PLAN_LIMITS = build_plan_limits()
 def free_monthly_slides():
     """Monthly slide allowance for new Free accounts (SlideCredit, welcome copy)."""
     return int(_raw()["plans"]["free"]["monthly_slides"])
+
+
+def guest_monthly_slides():
+    """Monthly slide allowance for anonymous sessions."""
+    return int(_raw()["plans"]["guest"]["monthly_slides"])
+
+
+def max_slides_per_presentation(plan):
+    """Maximum slides per generated deck for a plan id; None means unlimited."""
+    raw = _raw()["plans"].get(plan, {}).get("max_slides_per_presentation")
+    return None if raw is None else int(raw)

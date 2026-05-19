@@ -9,6 +9,7 @@ from rest_framework import exceptions
 
 from apps.billing.models import SlideCredit, Subscription
 from apps.billing.plan_limits_config import free_monthly_slides
+from apps.billing.utils import transfer_guest_credits_to_user
 from apps.presentations.models import Presentation
 
 from .emails import send_welcome_email
@@ -32,6 +33,7 @@ def provision_user_account(user, session_key=None, send_welcome=True):
     )
 
     if session_key:
+        transfer_guest_credits_to_user(user, session_key)
         Presentation.objects.filter(
             user__isnull=True,
             session_key=session_key,

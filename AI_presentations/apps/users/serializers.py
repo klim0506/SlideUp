@@ -3,7 +3,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
 from rest_framework import serializers
 
-from apps.billing.models import Subscription
+from apps.billing.utils import get_effective_plan, get_or_create_slide_credit
 from .services import provision_user_account
 
 
@@ -86,9 +86,7 @@ class CurrentUserSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_plan(self, user):
-        subscription = getattr(user, "subscription", None)
-        return subscription.plan if subscription else Subscription.Plan.FREE.value
+        return get_effective_plan(user)
 
     def get_slides_available(self, user):
-        slide_credit = getattr(user, "slide_credit", None)
-        return slide_credit.available() if slide_credit else 0
+        return get_or_create_slide_credit(user).available()

@@ -1,5 +1,6 @@
 /** Helpers + miniature canvas for deck slides (shared by PresentationView and SlideThumb). */
 
+import { useEffect, useRef, useState } from "react";
 import {
   getSafeSlideHtml,
   getSlideChart,
@@ -134,8 +135,24 @@ export function DeckSlideThumbCanvas({
     ? slide.metadata.icon.trim()
     : (typeof slide?.icon === "string" ? slide.icon.trim() : "");
 
+  const outerRef = useRef(null);
+  const [htmlScale, setHtmlScale] = useState(null);
+
+  useEffect(() => {
+    if (!safeHtml) return;
+    const el = outerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width;
+      if (w > 0 && W > 0) setHtmlScale(w / W);
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [safeHtml, W]);
+
   return (
     <div
+      ref={outerRef}
       style={{
         aspectRatio: "16 / 9",
         width: "100%",
@@ -158,14 +175,20 @@ export function DeckSlideThumbCanvas({
         }}
       >
         {safeHtml ? (
-          <>
-            <style>{THUMB_HTML_BASE_CSS}</style>
+          <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
             <div
-              className="slide-thumb-html"
-              style={{ "--accent": preset.accent, color: preset.ink }}
+              style={{
+                width: W,
+                height: H,
+                transformOrigin: "top left",
+                transform: htmlScale !== null ? `scale(${htmlScale})` : "none",
+                visibility: htmlScale !== null ? "visible" : "hidden",
+                "--accent": preset.accent,
+                color: preset.ink,
+              }}
               dangerouslySetInnerHTML={{ __html: safeHtml }}
             />
-          </>
+          </div>
         ) : (
           <LegacyMiniature
             slide={slide}
